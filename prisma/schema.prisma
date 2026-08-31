@@ -1,0 +1,322 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// --- Dynamic pricing (Phase 2.1) ---
+// All money fields are integer cents to avoid floating-point rounding errors.
+
+// One row per installed shop. Anchors every pricing record to a tenant.
+model Store {
+  id         String   @id @default(cuid())
+  shopDomain String   @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  pricingProfiles         PricingProfile[]
+  productPricingOverrides ProductPricingOverride[]
+}
+
+// A named pricing strategy (e.g. "Standard", "Wholesale") a store can apply to products.
+// `sku` identifies a profile that belongs to one specific product (e.g. "LNY01") before
+// that product has a known Shopify product ID — see ProductPricingOverride for the
+// eventual Shopify-side link. Nullable because non-product-specific profiles (e.g. a
+// general "Wholesale" strategy applied via ProductPricingOverride) may not have one SKU.
+model PricingProfile {
+  id             String   @id @default(cuid())
+  storeId        String
+  store          Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  sku            String?
+  name           String
+  description    String?
+  isDefault      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  basePriceCents Int      @default(0)
+  currency       String   @default("USD")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  quantityTiers          QuantityTier[]
+  decorationRules        DecorationRule[]
+  decorationColorCharges DecorationColorCharge[]
+  optionGroups           OptionGroup[]
+  productColors          ProductColor[]
+  productionRules        ProductionRule[]
+  packagingRules         PackagingRule[]
+  productOverrides       ProductPricingOverride[]
+
+  @@unique([storeId, name])
+  @@unique([storeId, sku])
+  @@index([storeId])
+}
+
+// Quantity break. List and net price are both kept — the calculation engine (a later
+// phase) decides which one a given customer/channel sees. Neither is derived from the
+// other; both are supplied tier prices. `priceCode` (Phase 2.7) is optional vendor
+// price-sheet metadata (e.g. a Sage-style price-grid column reference) — display-only,
+// never consumed by the calculation engine, never a substitute for the cent fields.
+model QuantityTier {
+  id               String         @id @default(cuid())
+  pricingProfileId String
+  pricingProfile   PricingProfile @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  minQuantity      Int
+  maxQuantity      Int?
+  priceCode        String?
+  listPriceCents   Int
+  netPriceCents    Int
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([pricingProfileId, minQuantity])
+  @@index([pricingProfileId])
+}
+
+enum DecorationMethod {
+  SCREEN_PRINT
+  EMBROIDERY
+  DTF
+  DTG
+  VINYL
+  SUBLIMATION
+  OTHER
+}
+
+// Whether a decoration charge applies once per order/configuration, or per produced unit.
+enum DecorationChargeBasis {
+  ONE_TIME
+  PER_UNIT
+}
+
+// One structured decoration charge (e.g. "setup, one color one location" or "additional
+// color run charge"). Each distinct charge for a decoration method is its own row —
+// charges are never merged into a single generic fee, so the calculation engine can apply
+// only the ones that actually apply to a given order configuration. `code` is a stable
+// per-profile identifier (e.g. "SETUP_1C1L") used for idempotent import.
+model DecorationRule {
+  id               String                @id @default(cuid())
+  pricingProfileId String
+  pricingProfile   PricingProfile        @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  method           DecorationMethod
+  code             String
+  name             String
+  chargeBasis      DecorationChargeBasis
+  priceCode        String?
+  listPriceCents   Int
+  netPriceCents    Int
+  sortOrder        Int                   @default(0)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@unique([pricingProfileId, code])
+  @@index([pricingProfileId])
+}
+
+// One structured charge for the Nth decoration color (colorNumber >= 2 — the first
+// color is always covered by the base setup, e.g. SETUP_1C1L). Phase 2.7: replaces the
+// old binary "colors > 1" gate (see calculator.ts) with an explicit per-color-number
+// table, so a profile can price color 2, color 3, color 4, ... independently instead of
+// treating "any additional color" as one flat charge. `chargeBasis` reuses the same
+// enum DecorationRule uses (ONE_TIME = once per order, PER_UNIT = once per produced
+// unit) — deliberately not a new enum, since the semantics are identical. A method/color
+// combination may have both a ONE_TIME (setup) and a PER_UNIT (run) row.
+model DecorationColorCharge {
+  id               String                @id @default(cuid())
+  pricingProfileId String
+  pricingProfile   PricingProfile        @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  method           DecorationMethod
+  colorNumber      Int
+  chargeBasis      DecorationChargeBasis
+  priceCode        String?
+  listPriceCents   Int
+  netPriceCents    Int
+  isActive         Boolean               @default(true)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@unique([pricingProfileId, method, colorNumber, chargeBasis])
+  @@index([pricingProfileId])
+}
+
+// What an OptionGroup semantically represents. Phase 2.7: lets the catalog API (and any
+// future UI) distinguish an Attachment group from a generic Feature group by a real
+// field instead of matching on `name` text (which is merchant-editable, human-facing
+// copy, and was never meant to be a machine-readable type discriminator). Existing
+// groups default to GENERIC on migration — nothing about how they're priced or selected
+// changes; `kind` is metadata only, read by the catalog projection, never by the
+// calculation engine (attachments are still priced exactly as any OptionGroup is).
+enum OptionGroupKind {
+  GENERIC
+  ATTACHMENT
+  FEATURE
+}
+
+// A named group of customer-selectable options (e.g. "Attachment Style").
+// `categoryPriceAdjustmentCents` optionally represents a category-level surcharge (e.g.
+// "Heavy Duty +$0.23") for source data that gives a price per category rather than per
+// individual option value — see OptionValue for the option-level equivalent.
+model OptionGroup {
+  id                           String          @id @default(cuid())
+  pricingProfileId             String
+  pricingProfile               PricingProfile  @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  name                         String
+  kind                         OptionGroupKind @default(GENERIC)
+  isRequired                   Boolean         @default(false)
+  sortOrder                    Int             @default(0)
+  categoryPriceAdjustmentCents Int?
+  createdAt                    DateTime        @default(now())
+  updatedAt                    DateTime        @updatedAt
+
+  optionValues OptionValue[]
+
+  @@unique([pricingProfileId, name])
+  @@index([pricingProfileId])
+}
+
+// One selectable value within an OptionGroup. `priceAdjustmentCents` is nullable with no
+// default: null means "no price was supplied for this option" and must not be treated as
+// $0; an explicit 0 means the option is confirmed to add no cost. `code` preserves the
+// source catalog code (e.g. "SA03") when one was given; it is not unique, since the
+// supplied catalog itself reuses codes across distinct labeled items. `priceCode`
+// (Phase 2.7) is separate, optional vendor price-sheet metadata — display-only.
+model OptionValue {
+  id                   String      @id @default(cuid())
+  optionGroupId        String
+  optionGroup          OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+  code                 String?
+  label                String
+  priceCode            String?
+  priceAdjustmentCents Int?
+  isDefault            Boolean     @default(false)
+  sortOrder            Int         @default(0)
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@unique([optionGroupId, label])
+  @@index([optionGroupId])
+}
+
+// A selectable product color — a first-class configuration dimension (Phase 2.7),
+// distinct from OptionGroup/OptionValue: colors are a near-universal physical-product
+// dimension with their own identity (a stable `code`), not an arbitrary merchant-named
+// group. Kept intentionally minimal — no hex/visual-swatch metadata, since nothing in
+// the current source data or UI consumes one yet; add it later as an additive nullable
+// column if a real need appears. `priceAdjustmentCents` follows the same
+// null-means-not-supplied convention as OptionValue: null is not $0.
+model ProductColor {
+  id                   String         @id @default(cuid())
+  pricingProfileId     String
+  pricingProfile       PricingProfile @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  code                 String
+  name                 String
+  priceCode            String?
+  priceAdjustmentCents Int?
+  sortOrder            Int            @default(0)
+  isActive             Boolean        @default(true)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  @@unique([pricingProfileId, code])
+  @@index([pricingProfileId])
+}
+
+enum ProductionFeeType {
+  FLAT
+  PERCENTAGE
+  PER_UNIT
+}
+
+// A production/turnaround option (e.g. standard vs. rush). `code` is a stable per-profile
+// identifier used for idempotent import (e.g. "STANDARD", "RUSH"). `feeCents` is nullable:
+// null means no surcharge was supplied for this option, not that it is free.
+model ProductionRule {
+  id               String            @id @default(cuid())
+  pricingProfileId String
+  pricingProfile   PricingProfile    @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  code             String
+  name             String
+  isRush           Boolean           @default(false)
+  minBusinessDays  Int
+  maxBusinessDays  Int?
+  relatedSku       String?
+  feeCents         Int?
+  feeType          ProductionFeeType @default(FLAT)
+  notes            String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([pricingProfileId, code])
+  @@index([pricingProfileId])
+}
+
+// Physical packaging/carton information for a product. This phase stores dimensional data
+// only — no shipping rate is calculated from it. `code` is a stable per-profile identifier
+// used for idempotent import (e.g. "STANDARD_CARTON"). `feeCents` is nullable: null means
+// no packaging fee was supplied, not that packaging is free.
+model PackagingRule {
+  id               String         @id @default(cuid())
+  pricingProfileId String
+  pricingProfile   PricingProfile @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  code             String
+  name             String
+  unitsPerPackage  Int?
+  cartonWeightLbs  Float?
+  lengthIn         Float?
+  widthIn          Float?
+  heightIn         Float?
+  feeCents         Int?
+  notes            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([pricingProfileId, code])
+  @@index([pricingProfileId])
+}
+
+// Per-product pricing override: pins a specific Shopify product to a profile
+// and/or a fixed base price, without touching the product itself in Shopify.
+model ProductPricingOverride {
+  id               String          @id @default(cuid())
+  storeId          String
+  store            Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shopifyProductId String
+  pricingProfileId String?
+  pricingProfile   PricingProfile? @relation(fields: [pricingProfileId], references: [id], onDelete: SetNull)
+  basePriceCents   Int?
+  isActive         Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([storeId, shopifyProductId])
+  @@index([storeId])
+  @@index([pricingProfileId])
+}

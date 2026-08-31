@@ -1,0 +1,4 @@
+{
+  "name": "ImprintID Cart Pricing",
+  "description": "Enforces the server-calculated ImprintID price on a configured cart line."
+}

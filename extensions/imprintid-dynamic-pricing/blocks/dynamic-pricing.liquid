@@ -1,0 +1,287 @@
+{%- comment -%}
+  Dynamic Pricing block. Renders a skeleton the storefront JS (assets/dynamic-pricing.js)
+  fills in from GET/POST /apps/imprintid-pricing/pricing — see docs/storefront-pricing-ui.md.
+  No pricing value is written here or in that JS; every dollar amount comes from the
+  pricing API response at request time.
+
+  SKU resolution: the merchant's "Override SKU" setting takes precedence when set
+  (useful for previewing the block before a product's real SKU is assigned); otherwise
+  this uses the current product's first available variant's SKU, since SKUs in Shopify
+  belong to variants, not products. If neither resolves to a non-empty value, the block
+  renders its "unavailable" state and never calls the pricing API.
+{%- endcomment -%}
+
+{%- assign pricing_product = block.settings.product | default: product -%}
+{%- assign resolved_sku = block.settings.sku_override | default: pricing_product.selected_or_first_available_variant.sku -%}
+
+{%- comment -%}
+  TASK 2B — variant synchronization metadata. Re-audited for Task 2B.1, requirement 3
+  ("verify safe Liquid serialization") — confirmed correct as-is; nothing below changed
+  as a result, since re-escaping an already-correct value would double-encode it. The
+  reasoning, laid out explicitly here because that's what was asked for:
+
+  `data-variant-map` is PUBLIC storefront metadata (every variant's numeric id, SKU, and
+  availability — nothing a customer can't already see by opening the variant picker) —
+  it is a lookup table the storefront JS cross-checks a *claimed* variant id against
+  before trusting it, never a source of pricing itself. Real pricing is always
+  recomputed and signed server-side (see app/lib/pricing-api/storefront-handler.ts);
+  this map only ever answers "does this numeric id correspond to a real variant of THIS
+  product, and if so what's its SKU/availability" — see dynamic-pricing.js's
+  `resolveVariantFromMap`.
+
+  TWO SEPARATE ENCODING LAYERS, each doing a different job:
+    1. `variant.sku | json` — every merchant-controlled value (only the SKU; `available`
+       is a real boolean, not free text) is JSON-string-escaped by Liquid's `json`
+       filter before being placed inside the captured JSON text. This is what makes a
+       SKU containing a quote, backslash, ampersand, angle bracket, or Unicode character
+       represent safely *as JSON* — `json` produces a valid JSON string token no matter
+       what the SKU contains.
+    2. `variant_map_json | escape` — the ENTIRE captured JSON string (including its own
+       structural `"` characters from step 1, not just merchant content) is then
+       HTML-attribute-escaped as one unit, because it's being embedded inside a
+       double-quoted HTML attribute (`data-variant-map="..."` below), not inside a
+       `<script>` block. This is what stops the JSON's own literal `"` characters from
+       prematurely closing the HTML attribute. A browser's HTML parser automatically
+       reverses exactly this escaping when it reads the attribute value back out (that's
+       ordinary HTML entity decoding, not something the JS needs to do) — so
+       `element.dataset.variantMap` in dynamic-pricing.js receives the original,
+       unescaped JSON text, ready for `JSON.parse` (via `parseVariantMap`). Because the
+       value lives in an HTML ATTRIBUTE, not `<script>` element content, it is not
+       subject to the `</script>`-closing-tag-injection class of issue at all — that
+       risk only applies to text placed inside a script element's body (which is a
+       reason NOT to move this to a nested `<script type="application/json">`; the
+       current attribute-based approach is already immune to it, not merely mitigated).
+
+  `variant.id` is used ONLY as this JSON object's key (`"{{ variant.id }}":`) — JSON
+  object keys are syntactically always strings (the surrounding literal `"` characters
+  make it one), so this is never emitted as a bare JSON number. `variant.id` itself is a
+  Shopify-platform-guaranteed positive integer, never merchant-editable free text, so
+  interpolating it raw (rather than through `json`, which would turn an integer into an
+  UNQUOTED JSON number and break the key syntax) is deliberate and safe.
+
+  Parsing failure fails closed: `parseVariantMap` (dynamic-pricing-utils.js) returns `{}`
+  for anything that isn't valid, well-shaped JSON — never throws, never partially trusts
+  a malformed map.
+{%- endcomment -%}
+{%- capture variant_map_json -%}
+{
+{%- for variant in pricing_product.variants -%}
+"{{ variant.id }}":{"sku":{{ variant.sku | json }},"available":{{ variant.available | json }}}{% unless forloop.last %},{% endunless %}
+{%- endfor -%}
+}
+{%- endcapture -%}
+
+<div
+  class="imprintid-pricing"
+  data-imprintid-pricing
+  data-sku="{{ resolved_sku | escape }}"
+  data-variant-id="{{ pricing_product.selected_or_first_available_variant.id }}"
+  data-variant-sku="{{ pricing_product.selected_or_first_available_variant.sku | escape }}"
+  data-variant-available="{{ pricing_product.selected_or_first_available_variant.available }}"
+  data-product-id="{{ pricing_product.id }}"
+  data-product-gid="gid://shopify/Product/{{ pricing_product.id }}"
+  data-section-id="{{ section.id }}"
+  data-variant-map="{{ variant_map_json | escape }}"
+  data-proxy-path="/apps/imprintid-pricing/pricing"
+  data-show-breakdown="{{ block.settings.show_breakdown_by_default }}"
+  {{ block.shopify_attributes }}
+>
+  <h3 class="imprintid-pricing__heading">{{ 'dynamic_pricing.heading' | t }}</h3>
+
+  <p class="imprintid-pricing__unavailable" data-imprintid-pricing-unavailable hidden>
+    {{ 'dynamic_pricing.unsupported_product' | t }}
+  </p>
+
+  <p class="imprintid-pricing__loading" data-imprintid-pricing-loading hidden aria-live="polite">
+    {{ 'dynamic_pricing.loading_options' | t }}
+  </p>
+
+  <div class="imprintid-pricing__panel" data-imprintid-pricing-panel hidden>
+    <form data-imprintid-pricing-form novalidate>
+      <div class="imprintid-pricing__field">
+        <label for="imprintid-pricing-quantity-{{ block.id }}">{{ 'dynamic_pricing.quantity_label' | t }}</label>
+        <input
+          type="number"
+          id="imprintid-pricing-quantity-{{ block.id }}"
+          name="quantity"
+          data-imprintid-pricing-quantity
+          min="1"
+          step="1"
+          inputmode="numeric"
+          aria-describedby="imprintid-pricing-quantity-error-{{ block.id }}"
+        >
+        <p id="imprintid-pricing-quantity-error-{{ block.id }}" class="imprintid-pricing__field-error" data-imprintid-pricing-quantity-error hidden role="alert"></p>
+      </div>
+
+      {%- comment -%} Only shown when the catalog actually returns configured product
+         colors (see STEP 3, Phase 2.7) — LNY01 has none today, so this stays hidden for
+         it; the control exists generically for any future product that does. {%- endcomment -%}
+      <div class="imprintid-pricing__field" data-imprintid-pricing-color-wrap hidden>
+        <label for="imprintid-pricing-color-{{ block.id }}">{{ 'dynamic_pricing.color_label' | t }}</label>
+        <select id="imprintid-pricing-color-{{ block.id }}" data-imprintid-pricing-color></select>
+      </div>
+
+      <fieldset class="imprintid-pricing__field" data-imprintid-pricing-decoration-fieldset>
+        <legend>{{ 'dynamic_pricing.decoration_legend' | t }}</legend>
+
+        <div class="imprintid-pricing__field">
+          <label for="imprintid-pricing-colors-{{ block.id }}">{{ 'dynamic_pricing.colors_label' | t }}</label>
+          <select id="imprintid-pricing-colors-{{ block.id }}" data-imprintid-pricing-colors>
+            <option value="1">{{ 'dynamic_pricing.colors_one' | t }}</option>
+            <option value="2">{{ 'dynamic_pricing.colors_two' | t }}</option>
+          </select>
+        </div>
+
+        <div class="imprintid-pricing__field">
+          <label for="imprintid-pricing-locations-{{ block.id }}">{{ 'dynamic_pricing.locations_label' | t }}</label>
+          <select id="imprintid-pricing-locations-{{ block.id }}" data-imprintid-pricing-locations>
+            <option value="1">{{ 'dynamic_pricing.locations_one' | t }}</option>
+            <option value="2">{{ 'dynamic_pricing.locations_two' | t }}</option>
+          </select>
+        </div>
+
+        <div class="imprintid-pricing__field imprintid-pricing__field--checkbox">
+          <input type="checkbox" id="imprintid-pricing-reverse-{{ block.id }}" data-imprintid-pricing-reverse-side>
+          <label for="imprintid-pricing-reverse-{{ block.id }}">{{ 'dynamic_pricing.reverse_side_label' | t }}</label>
+        </div>
+
+        <div class="imprintid-pricing__field imprintid-pricing__field--checkbox" data-imprintid-pricing-reverse-artwork-wrap hidden>
+          <input type="checkbox" id="imprintid-pricing-reverse-artwork-{{ block.id }}" data-imprintid-pricing-reverse-artwork>
+          <label for="imprintid-pricing-reverse-artwork-{{ block.id }}">{{ 'dynamic_pricing.different_reverse_artwork_label' | t }}</label>
+        </div>
+
+        <div class="imprintid-pricing__field imprintid-pricing__field--checkbox">
+          <input type="checkbox" id="imprintid-pricing-repeat-{{ block.id }}" data-imprintid-pricing-repeat-order>
+          <label for="imprintid-pricing-repeat-{{ block.id }}">{{ 'dynamic_pricing.repeat_order_label' | t }}</label>
+        </div>
+      </fieldset>
+
+      <div class="imprintid-pricing__options" data-imprintid-pricing-options>
+        {%- comment -%} One <select> per OptionGroup is inserted here by JS, built from the real catalog response — never hardcoded. {%- endcomment -%}
+      </div>
+
+      <div class="imprintid-pricing__field">
+        <label for="imprintid-pricing-production-{{ block.id }}">{{ 'dynamic_pricing.production_label' | t }}</label>
+        <select id="imprintid-pricing-production-{{ block.id }}" data-imprintid-pricing-production></select>
+        <p class="imprintid-pricing__hint" data-imprintid-pricing-production-hint></p>
+      </div>
+    </form>
+
+    <div class="imprintid-pricing__result" data-imprintid-pricing-result aria-live="polite">
+      <div class="imprintid-pricing__unit-prices">
+        <div>
+          <span class="imprintid-pricing__unit-label">{{ 'dynamic_pricing.list_price_label' | t }}</span>
+          <span data-imprintid-pricing-list-unit>—</span>
+        </div>
+        <div>
+          <span class="imprintid-pricing__unit-label">{{ 'dynamic_pricing.your_price_label' | t }}</span>
+          <span data-imprintid-pricing-net-unit>—</span>
+        </div>
+      </div>
+
+      <div class="imprintid-pricing__total">
+        <span class="imprintid-pricing__total-label">{{ 'dynamic_pricing.total_label' | t }}</span>
+        <span data-imprintid-pricing-total>—</span>
+      </div>
+
+      <p class="imprintid-pricing__tier-note" data-imprintid-pricing-tier-note></p>
+
+      <table class="imprintid-pricing__tier-table" data-imprintid-pricing-tier-table hidden>
+        <caption>{{ 'dynamic_pricing.quantity_breaks_caption' | t }}</caption>
+        <thead>
+          <tr>
+            <th scope="col">{{ 'dynamic_pricing.quantity_breaks_qty_header' | t }}</th>
+            <th scope="col">{{ 'dynamic_pricing.list_price_label' | t }}</th>
+            <th scope="col">{{ 'dynamic_pricing.your_price_label' | t }}</th>
+          </tr>
+        </thead>
+        <tbody data-imprintid-pricing-tier-table-body></tbody>
+      </table>
+
+      <details class="imprintid-pricing__breakdown" data-imprintid-pricing-breakdown>
+        <summary>{{ 'dynamic_pricing.breakdown_summary' | t }}</summary>
+        <dl data-imprintid-pricing-breakdown-list></dl>
+      </details>
+    </div>
+
+    <p class="imprintid-pricing__error" data-imprintid-pricing-error hidden role="alert"></p>
+
+    {%- comment -%} Add to Cart is only ever enabled once a genuine, server-signed
+       cartPricing payload has come back for the current configuration (see
+       dynamic-pricing.js#renderResult) — the button itself never carries or computes a
+       price; it only adds the real Shopify variant to cart with that signed payload
+       attached as line properties, for imprintid-cart-pricing (the Cart Transform
+       Function) to verify and enforce. {%- endcomment -%}
+    <div class="imprintid-pricing__actions">
+      <button
+        type="button"
+        class="imprintid-pricing__add-to-cart"
+        data-imprintid-pricing-add-to-cart
+        disabled
+      >
+        {{ 'dynamic_pricing.add_to_cart' | t }}
+      </button>
+      <p class="imprintid-pricing__add-to-cart-status" data-imprintid-pricing-add-to-cart-status aria-live="polite"></p>
+    </div>
+  </div>
+</div>
+
+{{ 'dynamic-pricing.css' | asset_url | stylesheet_tag }}
+<script>
+  window.ImprintIdPricingStrings = {
+    "dynamic_pricing.unsupported_product": {{ 'dynamic_pricing.unsupported_product' | t | json }},
+    "dynamic_pricing.invalid_quantity": {{ 'dynamic_pricing.invalid_quantity' | t | json }},
+    "dynamic_pricing.configuration_error": {{ 'dynamic_pricing.configuration_error' | t | json }},
+    "dynamic_pricing.network_error": {{ 'dynamic_pricing.network_error' | t | json }},
+    "dynamic_pricing.option_none": {{ 'dynamic_pricing.option_none' | t | json }},
+    "dynamic_pricing.related_sku_hint": {{ 'dynamic_pricing.related_sku_hint' | t | json }},
+    "dynamic_pricing.tier_note": {{ 'dynamic_pricing.tier_note' | t | json }},
+    "dynamic_pricing.breakdown_base": {{ 'dynamic_pricing.breakdown_base' | t | json }},
+    "dynamic_pricing.breakdown_color": {{ 'dynamic_pricing.breakdown_color' | t | json }},
+    "dynamic_pricing.breakdown_decoration": {{ 'dynamic_pricing.breakdown_decoration' | t | json }},
+    "dynamic_pricing.breakdown_options": {{ 'dynamic_pricing.breakdown_options' | t | json }},
+    "dynamic_pricing.breakdown_production": {{ 'dynamic_pricing.breakdown_production' | t | json }},
+    "dynamic_pricing.breakdown_total_list": {{ 'dynamic_pricing.breakdown_total_list' | t | json }},
+    "dynamic_pricing.breakdown_total": {{ 'dynamic_pricing.breakdown_total' | t | json }},
+    "dynamic_pricing.add_to_cart": {{ 'dynamic_pricing.add_to_cart' | t | json }},
+    "dynamic_pricing.adding_to_cart": {{ 'dynamic_pricing.adding_to_cart' | t | json }},
+    "dynamic_pricing.added_to_cart": {{ 'dynamic_pricing.added_to_cart' | t | json }},
+    "dynamic_pricing.add_to_cart_error": {{ 'dynamic_pricing.add_to_cart_error' | t | json }},
+    "dynamic_pricing.add_to_cart_unavailable": {{ 'dynamic_pricing.add_to_cart_unavailable' | t | json }},
+    "dynamic_pricing.option_included": {{ 'dynamic_pricing.option_included' | t | json }},
+    "dynamic_pricing.option_price_unavailable": {{ 'dynamic_pricing.option_price_unavailable' | t | json }},
+    "dynamic_pricing.variant_changed": {{ 'dynamic_pricing.variant_changed' | t | json }},
+    "dynamic_pricing.variant_unavailable": {{ 'dynamic_pricing.variant_unavailable' | t | json }},
+    "dynamic_pricing.variant_sync_error": {{ 'dynamic_pricing.variant_sync_error' | t | json }}
+  };
+</script>
+{%- comment -%} Module scripts are deferred by default; dynamic-pricing.js imports
+   dynamic-pricing-utils.js directly (see that file), so only one tag is needed here. {%- endcomment -%}
+<script type="module" src="{{ 'dynamic-pricing.js' | asset_url }}"></script>
+
+{% schema %}
+{
+  "name": "Dynamic Pricing",
+  "target": "section",
+  "settings": [
+    {
+      "type": "product",
+      "id": "product",
+      "label": "Product",
+      "autofill": true
+    },
+    {
+      "type": "text",
+      "id": "sku_override",
+      "label": "Override SKU",
+      "info": "Leave blank to use the current product's SKU automatically."
+    },
+    {
+      "type": "checkbox",
+      "id": "show_breakdown_by_default",
+      "label": "Expand price breakdown by default",
+      "default": false
+    }
+  ]
+}
+{% endschema %}

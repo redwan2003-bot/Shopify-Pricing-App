@@ -1,0 +1,261 @@
+/* Scoped entirely under .imprintid-pricing — no bare element or global selectors, so
+   this extension can never bleed into the rest of the merchant's theme. Uses relative
+   units and a simple flex/grid layout so it works from mobile up to desktop without a
+   separate breakpoint set. Colors intentionally use `currentColor`/`inherit` and a
+   small set of neutral tones so the block visually sits inside whatever theme it's
+   dropped into, rather than importing an unrelated design system. */
+
+.imprintid-pricing {
+  --imprintid-border: rgba(0, 0, 0, 0.12);
+  --imprintid-muted: rgba(0, 0, 0, 0.6);
+  --imprintid-error: #c0392b;
+  --imprintid-error-bg: rgba(192, 57, 43, 0.08);
+  --imprintid-radius: 8px;
+  box-sizing: border-box;
+  max-width: 32rem;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.imprintid-pricing *,
+.imprintid-pricing *::before,
+.imprintid-pricing *::after {
+  box-sizing: inherit;
+}
+
+.imprintid-pricing__heading {
+  margin: 0 0 0.75em;
+  font-size: 1.1em;
+}
+
+.imprintid-pricing__unavailable,
+.imprintid-pricing__loading {
+  margin: 0;
+  color: var(--imprintid-muted);
+}
+
+.imprintid-pricing__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25em;
+}
+
+.imprintid-pricing__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  margin-bottom: 0.85em;
+}
+
+.imprintid-pricing__field:last-child {
+  margin-bottom: 0;
+}
+
+.imprintid-pricing__field label {
+  font-weight: 600;
+  font-size: 0.92em;
+}
+
+.imprintid-pricing__field input[type="number"],
+.imprintid-pricing__field select {
+  width: 100%;
+  max-width: 14rem;
+  padding: 0.55em 0.65em;
+  border: 1px solid var(--imprintid-border);
+  border-radius: var(--imprintid-radius);
+  font-size: 1em;
+  background: transparent;
+  color: inherit;
+}
+
+.imprintid-pricing__field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.imprintid-pricing__field--checkbox label {
+  font-weight: 400;
+}
+
+.imprintid-pricing__field input:focus-visible,
+.imprintid-pricing__field select:focus-visible,
+.imprintid-pricing__breakdown summary:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.imprintid-pricing fieldset {
+  border: 1px solid var(--imprintid-border);
+  border-radius: var(--imprintid-radius);
+  padding: 0.85em 1em 1em;
+  margin: 0;
+}
+
+.imprintid-pricing legend {
+  font-weight: 600;
+  padding: 0 0.35em;
+}
+
+.imprintid-pricing__field-error {
+  margin: 0;
+  color: var(--imprintid-error);
+  font-size: 0.85em;
+}
+
+.imprintid-pricing__options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85em;
+}
+
+.imprintid-pricing__result {
+  border-top: 1px solid var(--imprintid-border);
+  padding-top: 1em;
+}
+
+.imprintid-pricing__unit-prices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5em 2em;
+  margin-bottom: 0.75em;
+}
+
+.imprintid-pricing__unit-label {
+  display: block;
+  font-size: 0.82em;
+  color: var(--imprintid-muted);
+}
+
+.imprintid-pricing__total {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  font-size: 1.3em;
+  font-weight: 700;
+  margin-bottom: 0.35em;
+}
+
+.imprintid-pricing__total-label {
+  font-size: 0.6em;
+  font-weight: 600;
+  color: var(--imprintid-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.imprintid-pricing__tier-note {
+  margin: 0 0 0.75em;
+  font-size: 0.88em;
+  color: var(--imprintid-muted);
+}
+
+.imprintid-pricing__tier-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1em;
+  font-size: 0.9em;
+}
+
+.imprintid-pricing__tier-table caption {
+  text-align: left;
+  font-weight: 600;
+  margin-bottom: 0.4em;
+}
+
+.imprintid-pricing__tier-table th,
+.imprintid-pricing__tier-table td {
+  text-align: left;
+  padding: 0.4em 0.6em;
+  border-bottom: 1px solid var(--imprintid-border);
+}
+
+.imprintid-pricing__tier-table tr[aria-current="true"] {
+  font-weight: 700;
+}
+
+.imprintid-pricing__breakdown summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.imprintid-pricing__breakdown dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35em 1em;
+  margin: 0.75em 0 0;
+}
+
+.imprintid-pricing__breakdown dt {
+  color: var(--imprintid-muted);
+}
+
+.imprintid-pricing__breakdown dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.imprintid-pricing__error {
+  margin: 1em 0 0;
+  padding: 0.65em 0.85em;
+  border-radius: var(--imprintid-radius);
+  background: var(--imprintid-error-bg);
+  color: var(--imprintid-error);
+  font-size: 0.92em;
+}
+
+.imprintid-pricing[data-loading="true"] .imprintid-pricing__panel {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.imprintid-pricing__actions {
+  margin-top: 1em;
+}
+
+.imprintid-pricing__add-to-cart {
+  width: 100%;
+  padding: 0.75em 1em;
+  border: 1px solid var(--imprintid-muted);
+  border-radius: var(--imprintid-radius);
+  background: var(--imprintid-muted);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.imprintid-pricing__add-to-cart:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.imprintid-pricing__add-to-cart:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.imprintid-pricing__add-to-cart[data-state="success"] {
+  background: #1c6b3a;
+  border-color: #1c6b3a;
+}
+
+.imprintid-pricing__add-to-cart[data-state="error"] {
+  background: var(--imprintid-error);
+  border-color: var(--imprintid-error);
+}
+
+.imprintid-pricing__add-to-cart-status {
+  margin: 0.5em 0 0;
+  font-size: 0.9em;
+  color: var(--imprintid-muted);
+  text-align: center;
+}
+
+@media (min-width: 40em) {
+  .imprintid-pricing__field input[type="number"],
+  .imprintid-pricing__field select {
+    max-width: 10rem;
+  }
+}

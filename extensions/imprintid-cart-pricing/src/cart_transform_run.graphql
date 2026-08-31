@@ -1,0 +1,23 @@
+query CartTransformRunInput {
+  presentmentCurrencyRate
+  cart {
+    lines {
+      id
+      quantity
+      merchandise {
+        ... on ProductVariant {
+          id
+        }
+      }
+      version: attribute(key: "_imprintid_pricing_version") {
+        value
+      }
+      payload: attribute(key: "_imprintid_pricing_payload") {
+        value
+      }
+      signature: attribute(key: "_imprintid_pricing_signature") {
+        value
+      }
+    }
+  }
+}
