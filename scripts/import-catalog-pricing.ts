@@ -30,6 +30,7 @@ import {
 import type {
   PricingProfileImportInput,
   DecorationRuleInput,
+  DecorationColorChargeInput,
   OptionGroupInput,
   ProductionRuleInput,
   PackagingRuleInput,
@@ -52,6 +53,28 @@ const CHARGE_TYPE_MAP: Record<string, DecorationChargeBasis> = {
   setup: DecorationChargeBasis.ONE_TIME,
   per_unit: DecorationChargeBasis.PER_UNIT,
 };
+
+// app/lib/pricing/calculator.ts#DECORATION_CODES is a FIXED vocabulary the calculator
+// requires by exact code, not a data-driven lookup — every priced configuration needs a
+// DecorationRule whose `code` is one of these four strings for the method being priced.
+// This maps the source JSON's free-form charge ids (verified exhaustively against every
+// "ready_exact_match" profile — see the import investigation) onto that vocabulary. An
+// id not listed here is NOT silently dropped or guessed at — see `error` below.
+const BASE_SETUP_CHARGE_IDS = new Set([
+  "setup_charge_one_color_one_location", // Screen Print
+  "full_color_sublimation_setup_charge", // Sublimation
+  "front_and_back_full_color_edge_to_edge_digital_printed_setup_charge", // Sublimation (double-sided)
+  "setup_charge", // Woven
+]);
+const REVERSE_SIDE_CHARGE_IDS = new Set(["reverse_side_setup_if_different_art"]);
+const SECOND_LOCATION_CHARGE_IDS = new Set(["2nd_location_run_charge"]);
+const REPEAT_ORDER_CHARGE_IDS = new Set(["repeat_order_setup_charge"]);
+// These aren't a DecorationRule at all — they're per-color pricing (Phase 2.7's
+// DecorationColorCharge table, keyed by method+colorNumber), never looked up by a fixed
+// code. Every occurrence in the source data is the color-2 charge (the calculator has no
+// concept of "additional colors" beyond that table).
+const ADDITIONAL_COLOR_SETUP_CHARGE_IDS = new Set(["additional_color_setup_charge"]);
+const ADDITIONAL_COLOR_RUN_CHARGE_IDS = new Set(["additional_color_run_charge"]);
 
 // ---------------------------------------------------------------------------
 // Minimal RFC4180 CSV parser (quoted fields, embedded commas/newlines, "" escapes).
@@ -163,6 +186,7 @@ function transformProfile(
   }
 
   const decorationRules: DecorationRuleInput[] = [];
+  const decorationColorCharges: DecorationColorChargeInput[] = [];
   for (const group of Array.isArray(profile.decorationRules) ? profile.decorationRules : []) {
     const method = METHOD_MAP[group.method];
     if (!method) {
@@ -175,9 +199,28 @@ function transformProfile(
           error: `unrecognized decoration chargeType "${charge.chargeType}" (${group.id}/${charge.id})`,
         };
       }
+
+      if (ADDITIONAL_COLOR_SETUP_CHARGE_IDS.has(charge.id) || ADDITIONAL_COLOR_RUN_CHARGE_IDS.has(charge.id)) {
+        decorationColorCharges.push({
+          method,
+          colorNumber: 2,
+          chargeBasis,
+          listPriceCents: charge.listPriceCents,
+          netPriceCents: charge.netPriceCents,
+        });
+        continue;
+      }
+
+      let code: string;
+      if (BASE_SETUP_CHARGE_IDS.has(charge.id)) code = "SETUP_1C1L";
+      else if (REVERSE_SIDE_CHARGE_IDS.has(charge.id)) code = "REVERSE_SIDE_SETUP";
+      else if (SECOND_LOCATION_CHARGE_IDS.has(charge.id)) code = "SECOND_LOCATION_RUN";
+      else if (REPEAT_ORDER_CHARGE_IDS.has(charge.id)) code = "REPEAT_ORDER_SETUP";
+      else return { error: `unrecognized decoration charge id "${charge.id}" for method "${group.method}" — no calculator code mapping exists` };
+
       decorationRules.push({
         method,
-        code: `${group.id}_${charge.id}`.toUpperCase(),
+        code,
         name: charge.label,
         chargeBasis,
         listPriceCents: charge.listPriceCents,
@@ -248,6 +291,7 @@ function transformProfile(
       netPriceCents: t.netPriceCents,
     })),
     decorationRules,
+    decorationColorCharges,
     optionGroups,
     productionRules,
     packagingRules,
