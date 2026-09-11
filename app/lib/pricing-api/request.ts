@@ -34,8 +34,16 @@ export function parsePricingRequestBody(raw: unknown): ParsePricingRequestResult
     return { ok: false, issues: [{ path: "(body)", message: "Request body must be a JSON object" }] };
   }
 
-  if (typeof raw.sku !== "string" || raw.sku.trim().length === 0) {
-    issues.push({ path: "sku", message: "sku is required and must be a non-empty string" });
+  // Task 4A: a blank SKU is allowed ONLY when a shopifyProductId is present — the
+  // storefront-side resolver (product-resolver.ts) has already validated that id and
+  // confirmed an authoritative ProductPricingOverride before this point, so a
+  // blank-SKU calculation resolves entirely via the product-id override path. A blank
+  // SKU with no shopifyProductId is still rejected (nothing to price against).
+  const hasProductId = typeof raw.shopifyProductId === "string" && raw.shopifyProductId.trim().length > 0;
+  if (typeof raw.sku !== "string") {
+    issues.push({ path: "sku", message: "sku must be a string" });
+  } else if (raw.sku.trim().length === 0 && !hasProductId) {
+    issues.push({ path: "sku", message: "sku is required unless a shopifyProductId is provided" });
   }
 
   if (typeof raw.quantity !== "number") {

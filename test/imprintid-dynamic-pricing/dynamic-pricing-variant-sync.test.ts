@@ -460,7 +460,7 @@ test("#11 a stale (superseded-by-variant-change) pricing HTTP response never ove
           resolveFirstPost = () => resolve(buildCalcResponse());
         });
       }
-      return buildCalcResponse({ cartPricing: { version: 1, payload: '{"v":2}', signature: "sig2" } });
+      return buildCalcResponse({ cartPricing: { version: 1, payload: '{"v":1}', signature: "sig2" } });
     },
   });
   await wait(20); // the initial recalculateNow() POST is now in-flight and NOT yet resolved

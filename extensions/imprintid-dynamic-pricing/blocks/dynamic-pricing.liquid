@@ -63,22 +63,45 @@
   for anything that isn't valid, well-shaped JSON — never throws, never partially trusts
   a malformed map.
 {%- endcomment -%}
+{%- comment -%}
+  TASK 4A — blank-SKU variants. `variant.sku` is `nil` for a Shopify variant with no
+  SKU (LNY01's three variants today). `| default: '' | json` normalizes that `nil` (and
+  an empty string) to a JSON `""` at this metadata boundary — so the storefront JS only
+  ever sees a *string* SKU, never `null`. A blank SKU never authorizes pricing on its
+  own: dynamic pricing for a blank-SKU variant works only when the server resolves an
+  active ProductPricingOverride for the authenticated shop + `data-shopify-product-id`
+  (see app/lib/pricing-api/product-resolver.ts). `variant.id` remains a bare decimal
+  string — never a JS number (Shopify ids exceed 2^53).
+{%- endcomment -%}
 {%- capture variant_map_json -%}
 {
 {%- for variant in pricing_product.variants -%}
-"{{ variant.id }}":{"sku":{{ variant.sku | json }},"available":{{ variant.available | json }}}{% unless forloop.last %},{% endunless %}
+"{{ variant.id }}":{"sku":{{ variant.sku | default: '' | json }},"available":{{ variant.available | json }}}{% unless forloop.last %},{% endunless %}
 {%- endfor -%}
 }
 {%- endcapture -%}
 
+{%- comment -%}
+  TASK 4A.5.2 — ENFORCEMENT INTENT. Rendering this block on a product page is itself the
+  enforcement signal: the storefront JS then CONTAINS that product's native Shopify Add
+  to Cart (main + sticky) so a customer cannot bypass ImprintID pricing with an unsigned
+  line — and it keeps that containment even if `data-variant-map` is missing / malformed
+  (dynamic pricing fails closed; the native cart does NOT re-open). There is no per-
+  product opt-out attribute yet: a product that must NOT be ImprintID-enforced simply
+  must not include this block (or an enforced template) until the authoritative
+  `$app:imprintid/pricing_policy` product-metafield signal is provisioned — at which
+  point enforcement intent should be read from that metafield instead of from mere block
+  presence + product id.
+{%- endcomment -%}
 <div
   class="imprintid-pricing"
   data-imprintid-pricing
   data-sku="{{ resolved_sku | escape }}"
   data-variant-id="{{ pricing_product.selected_or_first_available_variant.id }}"
-  data-variant-sku="{{ pricing_product.selected_or_first_available_variant.sku | escape }}"
+  data-variant-sku="{{ pricing_product.selected_or_first_available_variant.sku | default: '' | escape }}"
   data-variant-available="{{ pricing_product.selected_or_first_available_variant.available }}"
   data-product-id="{{ pricing_product.id }}"
+  data-shopify-product-id="{{ pricing_product.id }}"
   data-product-gid="gid://shopify/Product/{{ pricing_product.id }}"
   data-section-id="{{ section.id }}"
   data-variant-map="{{ variant_map_json | escape }}"
@@ -234,6 +257,7 @@
     "dynamic_pricing.configuration_error": {{ 'dynamic_pricing.configuration_error' | t | json }},
     "dynamic_pricing.network_error": {{ 'dynamic_pricing.network_error' | t | json }},
     "dynamic_pricing.option_none": {{ 'dynamic_pricing.option_none' | t | json }},
+    "dynamic_pricing.attachments_legend": {{ 'dynamic_pricing.attachments_legend' | t | json }},
     "dynamic_pricing.related_sku_hint": {{ 'dynamic_pricing.related_sku_hint' | t | json }},
     "dynamic_pricing.tier_note": {{ 'dynamic_pricing.tier_note' | t | json }},
     "dynamic_pricing.breakdown_base": {{ 'dynamic_pricing.breakdown_base' | t | json }},

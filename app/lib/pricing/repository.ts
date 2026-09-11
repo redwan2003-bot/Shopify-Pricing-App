@@ -81,6 +81,7 @@ function toPricingProfileData(profile: LoadedPricingProfile): PricingProfileData
         label: v.label,
         priceCode: v.priceCode,
         priceAdjustmentCents: v.priceAdjustmentCents,
+        netPriceAdjustmentCents: v.netPriceAdjustmentCents,
       })),
     })),
     productColors: profile.productColors.map((c) => ({

@@ -1,0 +1,59 @@
+query CartValidationsGenerateRunInput {
+  buyerJourney {
+    step
+  }
+  shop {
+    enforcementPolicy: metafield(namespace: "$app:imprintid", key: "enforcement_policy") {
+      jsonValue
+    }
+  }
+  cart {
+    lines {
+      id
+      quantity
+      cost {
+        amountPerQuantity {
+          amount
+        }
+        subtotalAmount {
+          amount
+          currencyCode
+        }
+      }
+      sellingPlanAllocation {
+        sellingPlan {
+          id
+        }
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+          product {
+            id
+            pricingPolicy: metafield(namespace: "$app:imprintid", key: "pricing_policy") {
+              jsonValue
+            }
+          }
+        }
+      }
+      version: attribute(key: "_imprintid_pricing_version") {
+        value
+      }
+      payload: attribute(key: "_imprintid_pricing_payload") {
+        value
+      }
+      signature: attribute(key: "_imprintid_pricing_signature") {
+        value
+      }
+      config: attribute(key: "_imprintid_pricing_config") {
+        value
+      }
+      parentRelationship {
+        parent {
+          id
+        }
+      }
+    }
+  }
+}

@@ -719,29 +719,37 @@ describe("options", () => {
 describe("resolveOptionValuePrice", () => {
   test("an explicit option-level price wins over the group's category price", () => {
     const result = resolveOptionValuePrice({ priceAdjustmentCents: 125 }, 20);
-    assert.deepEqual(result, { cents: 125, source: "option" });
+    assert.deepEqual(result, { cents: 125, netCents: 125, source: "option" });
   });
 
   test("falls back to the category price when the option's own price is null", () => {
     // Exactly LNY01's real "Attachment — Heavy Duty" shape.
     const result = resolveOptionValuePrice({ priceAdjustmentCents: null }, 23);
-    assert.deepEqual(result, { cents: 23, source: "category" });
+    assert.deepEqual(result, { cents: 23, netCents: 23, source: "category" });
   });
 
   test("a resolved price of exactly 0 is reported as a real category price, not unavailable", () => {
     // LNY01's real "Attachment — Standard" category price is a confirmed $0.
     const result = resolveOptionValuePrice({ priceAdjustmentCents: null }, 0);
-    assert.deepEqual(result, { cents: 0, source: "category" });
+    assert.deepEqual(result, { cents: 0, netCents: 0, source: "category" });
   });
 
   test("an option price of exactly 0 also wins over a non-null category price", () => {
     const result = resolveOptionValuePrice({ priceAdjustmentCents: 0 }, 20);
-    assert.deepEqual(result, { cents: 0, source: "option" });
+    assert.deepEqual(result, { cents: 0, netCents: 0, source: "option" });
   });
 
   test("neither option nor category price supplied -> unavailable, never a fabricated price", () => {
     const result = resolveOptionValuePrice({ priceAdjustmentCents: null }, null);
-    assert.deepEqual(result, { cents: null, source: "unavailable" });
+    assert.deepEqual(result, { cents: null, netCents: null, source: "unavailable" });
+  });
+
+  test("an option's own net price, when supplied, wins over falling back to its list price", () => {
+    const result = resolveOptionValuePrice(
+      { priceAdjustmentCents: 31, netPriceAdjustmentCents: 23 },
+      null,
+    );
+    assert.deepEqual(result, { cents: 31, netCents: 23, source: "option" });
   });
 
   test("is the exact function resolveOptions uses internally (no second implementation)", () => {

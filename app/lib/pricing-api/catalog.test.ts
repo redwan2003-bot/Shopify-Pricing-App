@@ -60,9 +60,16 @@ test("Phase 2.7: option groups expose `kind` so Attachment/Feature can be told a
   assert.equal(featureGroups[0]!.name, "Optional Features");
 });
 
-test("Phase 2.7: LNY01 has no product colors — documented absence, an empty array, never invented", async () => {
+test("Phase 2.7: LNY01 exposes its three stock colors (Black/Red/Blue), included at no upcharge", async () => {
   const catalog = await loadPricingCatalog(prisma, SHOP_DOMAIN, SKU);
-  assert.deepEqual(catalog.productColors, []);
+  assert.deepEqual(
+    catalog.productColors.map((c) => c.name).sort(),
+    ["Black", "Blue", "Red"],
+  );
+  assert.ok(
+    catalog.productColors.every((c) => c.priceAdjustmentCents === 0),
+    "stock colors carry a real 0 adjustment (Included), never null (price unavailable)",
+  );
 });
 
 test("Phase 2.7: decoration color charges expose the real per-color-2 pricing, sorted by color number", async () => {

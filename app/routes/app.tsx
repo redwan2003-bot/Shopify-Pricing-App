@@ -2,6 +2,9 @@ import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
+// Registers the global JSX types for the App Bridge custom elements used below
+// (e.g. <s-app-nav>). Loaded here because this layout is where those elements render.
+import "@shopify/app-bridge-react";
 
 import { authenticate } from "../shopify.server";
 
@@ -20,7 +23,7 @@ export default function App() {
       <s-app-nav>
         <s-link href="/app">Home</s-link>
         <s-link href="/app/product-configuration">Product Configuration</s-link>
-        <s-link href="/app/additional">Additional page</s-link>
+        <s-link href="/app/catalog">Catalog Management</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>

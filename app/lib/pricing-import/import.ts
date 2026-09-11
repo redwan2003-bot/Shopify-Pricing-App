@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { syncPricingProfileRevision } from "../pricing/revision.ts";
 import { validatePricingProfileImport } from "./validate.ts";
 import type {
   ImportResult,
@@ -45,6 +46,7 @@ export async function importPricingProfile(
 
   return prisma.$transaction(async (tx) => {
     const store = await tx.store.upsert({
+      /* interactive transaction — see the timeout option below */
       where: { shopDomain: input.shopDomain },
       update: {},
       create: { shopDomain: input.shopDomain },
@@ -137,6 +139,7 @@ export async function importPricingProfile(
               label: value.label,
               priceCode: value.priceCode ?? null,
               priceAdjustmentCents: value.priceAdjustmentCents ?? null,
+              netPriceAdjustmentCents: value.netPriceAdjustmentCents ?? null,
               isDefault: value.isDefault ?? false,
               sortOrder: value.sortOrder ?? valueIndex,
             })),
@@ -198,11 +201,21 @@ export async function importPricingProfile(
       })),
     });
 
+    // Task 6A.1 — the single centralized revision hook. Recomputes the pricing-content
+    // digest from the rows as they now stand and bumps `PricingProfile.revision` only if
+    // it actually changed, atomically with this import. A re-import of identical data
+    // (which deletes and recreates every child row) leaves the digest — and therefore the
+    // revision — untouched, so dry-run evidence issued before it stays valid.
+    const revision = await syncPricingProfileRevision(tx, profile.id);
+
     return {
       storeId: store.id,
       shopDomain: store.shopDomain,
       pricingProfileId: profile.id,
       sku: input.sku,
+      revision: revision?.revision ?? profile.revision,
+      contentDigest: revision?.digest ?? null,
+      revisionChanged: revision?.changed ?? false,
       counts: {
         quantityTiers: input.quantityTiers.length,
         decorationRules: input.decorationRules.length,
@@ -214,5 +227,10 @@ export async function importPricingProfile(
         packagingRules: input.packagingRules.length,
       },
     };
+  }, {
+    // The full replace-in-place of eight child tables plus the revision-digest read is
+    // more than the 5s default allows on a slow (Windows) SQLite file.
+    timeout: 30_000,
+    maxWait: 15_000,
   });
 }

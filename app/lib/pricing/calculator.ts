@@ -213,6 +213,9 @@ function resolveDecoration(
  * supplied — never treated as $0 by any caller. */
 export interface ResolvedOptionPrice {
   cents: number | null;
+  /** Net counterpart of `cents` — falls back to `cents` itself when the option (or
+   * category) never supplied a distinct net price. Never null when `cents` isn't. */
+  netCents: number | null;
   source: "option" | "category" | "unavailable";
 }
 
@@ -225,16 +228,23 @@ export interface ResolvedOptionPrice {
  * docs/pricing-architecture.md §7 for why null and 0 are never conflated here.
  */
 export function resolveOptionValuePrice(
-  optionValue: { priceAdjustmentCents: number | null },
+  optionValue: { priceAdjustmentCents: number | null; netPriceAdjustmentCents?: number | null },
   categoryPriceAdjustmentCents: number | null,
 ): ResolvedOptionPrice {
   if (optionValue.priceAdjustmentCents !== null) {
-    return { cents: optionValue.priceAdjustmentCents, source: "option" };
+    const cents = optionValue.priceAdjustmentCents;
+    return {
+      cents,
+      netCents: optionValue.netPriceAdjustmentCents ?? cents,
+      source: "option",
+    };
   }
   if (categoryPriceAdjustmentCents !== null) {
-    return { cents: categoryPriceAdjustmentCents, source: "category" };
+    // Category-level pricing (e.g. "Heavy Duty +$0.23") is a single flat surcharge in
+    // every source that supplies it — no net variant exists to fall back to here.
+    return { cents: categoryPriceAdjustmentCents, netCents: categoryPriceAdjustmentCents, source: "category" };
   }
-  return { cents: null, source: "unavailable" };
+  return { cents: null, netCents: null, source: "unavailable" };
 }
 
 function resolveOptions(
@@ -282,6 +292,7 @@ function resolveOptions(
       optionLabel: value.label,
       source: resolved.source,
       priceAdjustmentCents: resolved.cents,
+      netPriceAdjustmentCents: resolved.netCents ?? resolved.cents,
     });
   }
 
@@ -292,7 +303,8 @@ function resolveOptions(
   }
 
   const chargesCents = results.reduce((sum, r) => sum + r.priceAdjustmentCents, 0);
-  return { selections: results, chargesCents };
+  const netChargesCents = results.reduce((sum, r) => sum + r.netPriceAdjustmentCents, 0);
+  return { selections: results, chargesCents, netChargesCents };
 }
 
 /**
@@ -454,7 +466,7 @@ export function calculatePricingFromProfile(
     base.netSubtotalCents +
     productColorCents +
     decorationNetCents +
-    options.chargesCents +
+    options.netChargesCents +
     productionFeeCents +
     packagingFeeCents;
 

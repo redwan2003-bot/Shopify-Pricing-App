@@ -187,9 +187,19 @@ test("LNY01 requesting 3 colors is a clear, honest gap — no color-3 pricing wa
   );
 });
 
-test("LNY01 has no product colors configured — documented absence, not an error", async () => {
-  const result = await calculatePrice(prisma, { shopDomain: SHOP_DOMAIN, sku: SKU, quantity: 100 });
-  assert.equal(result.productColor, null);
+test("LNY01 product color: unset by default; selecting a stock color resolves at $0 (Included)", async () => {
+  const noColor = await calculatePrice(prisma, { shopDomain: SHOP_DOMAIN, sku: SKU, quantity: 100 });
+  assert.equal(noColor.productColor, null, "no color selected → null, never a fabricated default");
+
+  const withColor = await calculatePrice(prisma, {
+    shopDomain: SHOP_DOMAIN,
+    sku: SKU,
+    quantity: 100,
+    productColor: { code: "RED" },
+  });
+  assert.equal(withColor.productColor?.code, "RED");
+  assert.equal(withColor.productColor?.priceAdjustmentCents, 0, "stock color, no upcharge");
+  assert.equal(noColor.totals.listTotalCents, withColor.totals.listTotalCents, "a $0 color never moves the total");
 });
 
 test("LNY01 standard attachment option resolves through the category price (source: category, $0)", async () => {

@@ -21,9 +21,10 @@ export default function App() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>A short heading about [your app]</h1>
+        <h1 className={styles.heading}>ImprintID Dynamic Pricing</h1>
         <p className={styles.text}>
-          A tagline about [your app] that describes your value proposition.
+          Configure product-specific pricing rules and let customers build a
+          quote from real, server-calculated prices on the product page.
         </p>
         {showForm && (
           <Form className={styles.form} method="post" action="/auth/login">
@@ -39,16 +40,17 @@ export default function App() {
         )}
         <ul className={styles.list}>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Configurable pricing profiles</strong>. Quantity breaks,
+            decoration charges, option surcharges, and production rules per
+            product.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Live product-page quoting</strong>. Customers configure a
+            product and see list and net pricing calculated on your server.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Enforced at checkout</strong>. A Cart Transform verifies the
+            signed price so the configured amount is the amount charged.
           </li>
         </ul>
       </div>

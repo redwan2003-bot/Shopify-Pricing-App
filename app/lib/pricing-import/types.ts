@@ -90,6 +90,11 @@ export interface OptionValueInput {
   label: string;
   priceCode?: string | null;
   priceAdjustmentCents?: number | null;
+  /** Net (actually-charged) price adjustment, when the source supplies one separately
+   * from `priceAdjustmentCents` (list). Omit (or pass null) when the source has no
+   * distinct net figure — the calculator falls back to `priceAdjustmentCents` for both
+   * totals, so this must not be normalized to equal it here. */
+  netPriceAdjustmentCents?: number | null;
   isDefault?: boolean;
   sortOrder?: number;
 }
@@ -160,5 +165,11 @@ export interface ImportResult {
   shopDomain: string;
   pricingProfileId: string;
   sku: string;
+  /** Task 6A.1 — the profile revision AFTER the centralized revision sync ran. */
+  revision: number;
+  /** Deterministic digest of the profile's full pricing-output content. */
+  contentDigest: string | null;
+  /** Whether this import actually changed priced output (a no-op re-import is `false`). */
+  revisionChanged: boolean;
   counts: ImportResultCounts;
 }

@@ -1,4 +1,6 @@
 import type { PricingCatalogQuantityTier } from "../../../lib/pricing-api/catalog.ts";
+import { formatCents } from "../../../lib/product-configuration/format.ts";
+import { formatListRateLabel } from "../../../lib/product-configuration/view-model.ts";
 import styles from "../styles.module.css";
 
 export interface QuantitySelectorProps {
@@ -9,11 +11,15 @@ export interface QuantitySelectorProps {
 }
 
 /** Clickable quantity tiers, sourced entirely from `catalog.quantityTiers` — no tier
- * values are embedded in this component. Supports a custom quantity above the highest
- * tier's minimum, since the calculation engine itself resolves "the highest applicable
- * tier" for any quantity at or above it (see app/lib/pricing/calculator.ts). Does not
- * calculate a price itself — selecting a tier only updates the configuration state; the
- * server produces the actual price. */
+ * values, rate codes or prices are embedded in this component, and none are recomputed
+ * here: each button just shows the catalog's own `priceCode` and `listUnitPriceCents`
+ * for that tier, inline with the quantity (e.g. "100 — List Price (6R) $2.29").
+ *
+ * Supports a custom quantity above the highest tier's minimum, since the calculation
+ * engine itself resolves "the highest applicable tier" for any quantity at or above it
+ * (see app/lib/pricing/calculator.ts). The custom-quantity control is deliberately kept
+ * separate and unpriced — it is not a predefined tier and no price is guessed for it;
+ * the server returns the real unit price once a custom quantity is chosen. */
 export function QuantitySelector({ tiers, quantity, onChange, disabled }: QuantitySelectorProps) {
   const sorted = [...tiers].sort((a, b) => a.minQuantity - b.minQuantity);
   const lowestMinimum = sorted[0]?.minQuantity ?? 1;
@@ -29,6 +35,7 @@ export function QuantitySelector({ tiers, quantity, onChange, disabled }: Quanti
         <div className={styles.tierRow} role="group" aria-labelledby="quantity-label">
           {sorted.map((tier) => {
             const isSelected = quantity === tier.minQuantity;
+            const unitPrice = formatCents(tier.listUnitPriceCents);
             return (
               <button
                 key={tier.minQuantity}
@@ -39,8 +46,11 @@ export function QuantitySelector({ tiers, quantity, onChange, disabled }: Quanti
                 disabled={disabled}
                 onClick={() => onChange(tier.minQuantity)}
               >
-                {tier.minQuantity.toLocaleString("en-US")}
-                <span className={styles.tierUnit}>{tier.maxQuantity ? `– ${tier.maxQuantity.toLocaleString("en-US")}` : "+"}</span>
+                <span className={styles.tierQuantity}>{tier.minQuantity.toLocaleString("en-US")}</span>
+                <span className={styles.tierRate}>
+                  {formatListRateLabel(tier.priceCode)}
+                  {unitPrice ? ` ${unitPrice}` : ""}
+                </span>
               </button>
             );
           })}

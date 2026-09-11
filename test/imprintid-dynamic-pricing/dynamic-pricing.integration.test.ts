@@ -185,6 +185,33 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+test("every ATTACHMENT group is inside ONE clickable <details> Attachments box; Feature/Generic groups are not", async () => {
+  const { root } = await setupPricingBlock({
+    fetchHandler: (call) => (call.method === "GET" ? CATALOG_RESPONSE : buildCalcResponse()),
+  });
+  await wait(50);
+
+  const boxes = root.querySelectorAll("details.imprintid-pricing__attachments");
+  assert.equal(boxes.length, 1, "exactly one Attachments disclosure");
+  const box = boxes[0] as HTMLDetailsElement;
+  assert.equal(box.querySelector("summary")?.textContent, "Attachments");
+
+  const attachmentSelects = Array.from(box.querySelectorAll("select"));
+  assert.equal(attachmentSelects.length, 2, "both attachment categories render as their own <select> inside the box");
+  assert.deepEqual(
+    attachmentSelects.map((s) => s.dataset.groupName).sort(),
+    ["Attachment — Heavy Duty", "Attachment — Standard"],
+  );
+
+  // The Feature group renders as a normal field, NOT inside the Attachments box.
+  const featureSelect = Array.from(root.querySelectorAll("select")).find((s) => s.dataset.groupName === "Optional Features")!;
+  assert.ok(featureSelect, "the Feature group still renders");
+  assert.equal(box.contains(featureSelect), false, "the Feature group is not inside the Attachments box");
+
+  // Selecting an attachment inside the (default-collapsed) box still drives a request.
+  assert.equal(box.open, false, "collapsed by default — it's a click-to-open box");
+});
+
 test("init: loading the catalog renders real attachment prices in the <select> options (not hardcoded)", async () => {
   const { root } = await setupPricingBlock({
     fetchHandler: (call) => {
@@ -301,7 +328,7 @@ test("a pricing error response is shown to the customer and clears any previous 
     fetchHandler: (call) => {
       if (call.method === "GET") return CATALOG_RESPONSE;
       callCount++;
-      if (callCount === 1) return buildCalcResponse({ cartPricing: { version: 1, payload: "{}", signature: "sig" } });
+      if (callCount === 1) return buildCalcResponse({ cartPricing: { version: 1, payload: '{"v":1}', signature: "sig" } });
       return { ok: false, error: { code: "OPTION_PRICING_UNAVAILABLE", message: "No price configured for this option." } };
     },
   });

@@ -11,7 +11,7 @@ import { buildLny01PricingInput } from "../../../prisma/seed-data/lny01.ts";
  * here uses one disposable shop domain, cleaned up in `after`.
  */
 const TEST_SHOP_DOMAIN = `pricing-import-test-${process.pid}.invalid`;
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({ datasources: { db: { url: "file:dev.sqlite?socket_timeout=45&connection_limit=1" } } });
 
 after(async () => {
   await prisma.store.deleteMany({ where: { shopDomain: TEST_SHOP_DOMAIN } });
@@ -31,7 +31,7 @@ test("imports LNY01 and creates the expected record counts", async () => {
   assert.equal(result.counts.decorationRules, 4);
   assert.equal(result.counts.decorationColorCharges, 2);
   assert.equal(result.counts.optionGroups, 6);
-  assert.equal(result.counts.productColors, 0, "no color pricing data was sourced for LNY01 — documented, not a bug");
+  assert.equal(result.counts.productColors, 3, "LNY01's three stock Color variants (Black/Red/Blue)");
   assert.equal(result.counts.productionRules, 2);
   assert.equal(result.counts.packagingRules, 1);
 });

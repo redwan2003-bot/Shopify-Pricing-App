@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  ActionFunctionArgs,
+  HeadersFunction,
+  LoaderFunctionArgs,
+  ShouldRevalidateFunction,
+} from "react-router";
 import { useFetcher, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
@@ -12,12 +17,16 @@ import type { PricingCatalog } from "../../lib/pricing-api/catalog.ts";
 import type { ApiResponseBody } from "../../lib/pricing-api/types.ts";
 import type { PricingCalculationOutcome, ProductConfigurationState } from "../../lib/product-configuration/types.ts";
 import {
+  buildCalculationFingerprint,
   buildCalculationRequestBody,
   buildDefaultConfigurationState,
   buildQuoteSummary,
+  buildSelectedConfigurationRows,
+  productConfigurationShouldRevalidate,
   selectAttachmentGroups,
   selectFeatureGroups,
   selectGenericGroups,
+  shouldSubmitCalculation,
 } from "../../lib/product-configuration/view-model.ts";
 
 import { ProductHeader } from "./components/ProductHeader.tsx";
@@ -30,6 +39,7 @@ import { ColorCountSelector } from "./components/ColorCountSelector.tsx";
 import { DecorationOptionsToggles } from "./components/DecorationOptionsToggles.tsx";
 import { ProductColorSelector } from "./components/ProductColorSelector.tsx";
 import { OptionGroupSelector } from "./components/OptionGroupSelector.tsx";
+import { AttachmentsSection } from "./components/AttachmentsSection.tsx";
 import { ProductionSelector } from "./components/ProductionSelector.tsx";
 import { PricingSummary } from "./components/PricingSummary.tsx";
 import { ActionButtons } from "./components/ActionButtons.tsx";
@@ -143,6 +153,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return Response.json(result.body, { status: result.status });
 };
 
+/**
+ * A pricing recalculation is a fetcher `POST` to this route's own action — it never
+ * changes what the loader returns (sku / catalog / product). Revalidating the loader on
+ * every POST re-hit Shopify Admin on every keystroke AND minted a fresh `catalog`
+ * object that retriggered the recalculation effect → an endless loop that also emitted
+ * `shop: null` revalidation requests. See `productConfigurationShouldRevalidate`.
+ */
+export const shouldRevalidate: ShouldRevalidateFunction = ({ formMethod, defaultShouldRevalidate }) =>
+  productConfigurationShouldRevalidate(formMethod, defaultShouldRevalidate);
+
 export default function ProductConfigurationPreview() {
   const { sku, catalog, catalogError, product } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
@@ -152,19 +172,57 @@ export default function ProductConfigurationPreview() {
   );
   const [outcome, setOutcome] = useState<PricingCalculationOutcome>({ status: "idle" });
   const [showQuoteModal, setShowQuoteModal] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Debounced recalculation: every configuration change schedules one request; a
-  // further change before it fires cancels and reschedules. `useFetcher` tracks its own
-  // latest submission internally, so an in-flight request superseded by a newer one
-  // never overwrites the page with a stale result (React Router's fetcher revalidation
-  // model) — the same stale-response protection the storefront widget implements with
-  // an explicit AbortController, achieved here via the framework's fetcher instead.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The canonical input fingerprint of the calculation most recently *submitted* (set
+  // at submit time, BEFORE the request goes out). This is the single source of
+  // deduplication — an error response, a success response, a loader revalidation, and
+  // an unrelated rerender all leave the fingerprint unchanged, so none of them
+  // resubmit. Only a genuine input change flips it.
+  const lastSubmittedFingerprintRef = useRef<string | null>(null);
+  // Identity of the last `fetcher.data` already applied to `outcome` — so the same
+  // response is never applied twice (StrictMode double-invoke, fetcher object churn).
+  const processedFetcherDataRef = useRef<unknown>(null);
+  const skuRef = useRef(sku);
+
+  const ready = !!catalog && !!state && !catalogError;
+  const fingerprint = ready && state ? buildCalculationFingerprint(sku, state) : "";
+
+  // A real navigation changed the previewed SKU — reset the configuration to the new
+  // product's defaults and allow exactly one fresh calculation for it.
   useEffect(() => {
-    if (!catalog || !state) return;
+    if (skuRef.current === sku) return;
+    skuRef.current = sku;
+    setState(catalog ? buildDefaultConfigurationState(catalog) : null);
+    lastSubmittedFingerprintRef.current = null;
+    processedFetcherDataRef.current = null;
+    setOutcome({ status: "idle" });
+  }, [sku, catalog]);
+
+  // Recalculation effect. Deps are PRIMITIVES ONLY (`ready`, `fingerprint`) — never
+  // `catalog`, `fetcher`, `fetcher.data`, `outcome`, `product`, `state` identity, or
+  // any freshly-created object — so a loader revalidation, a response arriving, or an
+  // unrelated rerender cannot retrigger it. It submits only when the fingerprint
+  // genuinely changes (see `shouldSubmitCalculation`), debounced so rapid changes
+  // calculate only the latest state.
+  useEffect(() => {
+    if (
+      !shouldSubmitCalculation({
+        ready,
+        fingerprint,
+        lastSubmittedFingerprint: lastSubmittedFingerprintRef.current,
+      })
+    ) {
+      return;
+    }
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
+      // Re-check after the debounce: a newer change may already have been submitted
+      // (only the latest fingerprint is ever calculated), or this exact one already is.
+      if (lastSubmittedFingerprintRef.current === fingerprint || !state) return;
+      lastSubmittedFingerprintRef.current = fingerprint; // mark BEFORE submit — an error never resubmits the same input
+      processedFetcherDataRef.current = null;
       setOutcome({ status: "loading" });
       fetcher.submit(
         { payload: JSON.stringify(buildCalculationRequestBody(sku, state)) },
@@ -176,18 +234,34 @@ export default function ProductConfigurationPreview() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalog, sku, state]);
+  }, [ready, fingerprint]);
 
+  // Apply the fetcher's response exactly once, when it settles.
   useEffect(() => {
-    if (fetcher.state !== "idle" || !fetcher.data) return;
-    const body = fetcher.data as ApiResponseBody;
-    if (body.ok) {
-      setOutcome({ status: "success", result: body.data });
+    if (fetcher.state !== "idle") return;
+    const data = fetcher.data as ApiResponseBody | undefined;
+    if (!data || processedFetcherDataRef.current === data) return;
+    processedFetcherDataRef.current = data;
+    if (data.ok) {
+      setOutcome({ status: "success", result: data.data });
     } else {
-      setOutcome({ status: "error", code: body.error.code, message: body.error.message });
+      setOutcome({ status: "error", code: data.error.code, message: data.error.message });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher.state, fetcher.data]);
+
+  // The shared "Selected Configuration" view model — one derivation, consumed by both
+  // the Price Summary and the Request-a-Quote snapshot. Pure/memoized: it never submits,
+  // never touches the calculation fingerprint, and cannot retrigger the recalc effect
+  // (whose deps are primitives only). Recomputes only when the catalog, the selections,
+  // or the priced outcome actually change.
+  const selectedConfigurationRows = useMemo(
+    () =>
+      catalog && state
+        ? buildSelectedConfigurationRows(catalog, state, outcome.status === "success" ? outcome.result : null)
+        : [],
+    [catalog, state, outcome],
+  );
 
   if (catalogError) {
     return (
@@ -224,6 +298,18 @@ export default function ProductConfigurationPreview() {
 
   function updateState(patch: Partial<ProductConfigurationState>) {
     setState((current) => (current ? { ...current, ...patch } : current));
+  }
+
+  // One handler for every OptionGroup selector (attachment, feature, generic). A null
+  // value clears the selection for that group.
+  function handleOptionChange(groupName: string, optionValueId: string | null) {
+    setState((current) => {
+      if (!current) return current;
+      const next = { ...current.selectedOptionValueIds };
+      if (optionValueId) next[groupName] = optionValueId;
+      else delete next[groupName];
+      return { ...current, selectedOptionValueIds: next };
+    });
   }
 
   return (
@@ -266,37 +352,18 @@ export default function ProductConfigurationPreview() {
               onChange={(productColorCode) => updateState({ productColorCode })}
             />
 
-            {attachmentGroups.map((group) => (
-              <OptionGroupSelector
-                key={group.name}
-                group={group}
-                selectedOptionValueId={state.selectedOptionValueIds[group.name] ?? null}
-                onChange={(optionValueId) =>
-                  setState((current) => {
-                    if (!current) return current;
-                    const next = { ...current.selectedOptionValueIds };
-                    if (optionValueId) next[group.name] = optionValueId;
-                    else delete next[group.name];
-                    return { ...current, selectedOptionValueIds: next };
-                  })
-                }
-              />
-            ))}
+            <AttachmentsSection
+              groups={attachmentGroups}
+              selectedOptionValueIds={state.selectedOptionValueIds}
+              onOptionChange={handleOptionChange}
+            />
 
             {featureGroups.map((group) => (
               <OptionGroupSelector
                 key={group.name}
                 group={group}
                 selectedOptionValueId={state.selectedOptionValueIds[group.name] ?? null}
-                onChange={(optionValueId) =>
-                  setState((current) => {
-                    if (!current) return current;
-                    const next = { ...current.selectedOptionValueIds };
-                    if (optionValueId) next[group.name] = optionValueId;
-                    else delete next[group.name];
-                    return { ...current, selectedOptionValueIds: next };
-                  })
-                }
+                onChange={(optionValueId) => handleOptionChange(group.name, optionValueId)}
               />
             ))}
 
@@ -305,15 +372,7 @@ export default function ProductConfigurationPreview() {
                 key={group.name}
                 group={group}
                 selectedOptionValueId={state.selectedOptionValueIds[group.name] ?? null}
-                onChange={(optionValueId) =>
-                  setState((current) => {
-                    if (!current) return current;
-                    const next = { ...current.selectedOptionValueIds };
-                    if (optionValueId) next[group.name] = optionValueId;
-                    else delete next[group.name];
-                    return { ...current, selectedOptionValueIds: next };
-                  })
-                }
+                onChange={(optionValueId) => handleOptionChange(group.name, optionValueId)}
               />
             ))}
 
@@ -323,7 +382,7 @@ export default function ProductConfigurationPreview() {
               onChange={(productionCode) => updateState({ productionCode })}
             />
 
-            <PricingSummary outcome={outcome} />
+            <PricingSummary outcome={outcome} selectedConfigurationRows={selectedConfigurationRows} />
 
             <ActionButtons outcome={outcome} onRequestQuote={() => setShowQuoteModal(true)} />
           </div>

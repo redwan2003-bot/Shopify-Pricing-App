@@ -1,0 +1,22 @@
+api_version = "2026-07"
+
+[[extensions]]
+name = "t:name"
+handle = "imprintid-cart-validation"
+type = "function"
+uid = "f6c40ee2-077e-ec69-1857-fc896b1265893588c64d"
+description = "t:description"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/cart_validations_generate_run.graphql"
+  export = "cart-validations-generate-run"
+
+  [extensions.build]
+  # Task 5B.3B §Phase-2 — the gitignored src/config.secret.generated.ts (imported by
+  # src/config.generated.ts) MUST exist before this Function is bundled. It is written
+  # by `node scripts/generate-config.mjs`, run automatically by the repo-root npm hooks
+  # `pretest` / `pretypecheck` / `predev` / `predeploy` (see package.json `fn:config`).
+  # A custom `command` here would REPLACE the CLI's javy build, so it stays empty.
+  command = ""
+  path = "dist/function.wasm"

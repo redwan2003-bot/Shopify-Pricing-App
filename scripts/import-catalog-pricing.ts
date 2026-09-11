@@ -1,0 +1,364 @@
+/**
+ * Bulk-loads real product pricing from the ImprintID catalog export into this app's
+ * pricing database, via the same `importPricingProfile()` every other import path uses
+ * (see prisma/seed.ts for the single-product precedent this generalizes).
+ *
+ * Source: a Shopify product CSV export carrying two extra columns —
+ * `product.metafields.imprintid_pricing.profile` (a JSON pricing package per product,
+ * on that product's first row) and `...sync_status` (how confidently that JSON was
+ * derived from the original vendor pricing sheet).
+ *
+ * Only `sync_status === "ready_exact_match"` rows are imported automatically — the
+ * other statuses (`partial_no_quantity_tiers`, `ready_derived_family_match`,
+ * `review_scaled_to_existing_price`) mean the source data itself flagged the pricing
+ * as incomplete or inferred, which this script will not silently treat as ground
+ * truth for checkout math. A further handful of "ready_exact_match" rows are held
+ * back too, when the JSON itself doesn't satisfy this app's required shape (no
+ * packaging rule, or a decoration "method" that isn't a real decoration technique —
+ * see `METHOD_MAP` below). Every held-back SKU is reported with its reason; nothing
+ * is imported by guessing.
+ *
+ * Usage:
+ *   node scripts/import-catalog-pricing.ts <path-to-csv> [--shop <shopDomain>] [--dry-run]
+ */
+import { PrismaClient, DecorationMethod, DecorationChargeBasis, OptionGroupKind, ProductionFeeType } from "@prisma/client";
+import { readFileSync } from "node:fs";
+import {
+  importPricingProfile,
+  PricingImportValidationError,
+} from "../app/lib/pricing-import/import.ts";
+import type {
+  PricingProfileImportInput,
+  DecorationRuleInput,
+  OptionGroupInput,
+  ProductionRuleInput,
+  PackagingRuleInput,
+} from "../app/lib/pricing-import/types.ts";
+
+const DEFAULT_SHOP_DOMAIN = "imprintid-pricing-dev.myshopify.com";
+const PROFILE_COLUMN = "ImprintID Pricing Profile (product.metafields.imprintid_pricing.profile)";
+const STATUS_COLUMN = "ImprintID Pricing Sync Status (product.metafields.imprintid_pricing.sync_status)";
+
+// The only decoration "method" strings this source data has ever been observed to use
+// for a real, priceable technique. Anything else (e.g. a mis-scraped column label like
+// "Set Up Charge After Login") is held back, never guessed at.
+const METHOD_MAP: Record<string, DecorationMethod> = {
+  "Screen Print": DecorationMethod.SCREEN_PRINT,
+  "Sublimation": DecorationMethod.SUBLIMATION,
+  "Woven": DecorationMethod.WOVEN,
+};
+
+const CHARGE_TYPE_MAP: Record<string, DecorationChargeBasis> = {
+  setup: DecorationChargeBasis.ONE_TIME,
+  per_unit: DecorationChargeBasis.PER_UNIT,
+};
+
+// ---------------------------------------------------------------------------
+// Minimal RFC4180 CSV parser (quoted fields, embedded commas/newlines, "" escapes).
+// No dependency was already in package.json for this, and the file is simple enough
+// not to warrant adding one for a one-off maintenance script.
+// ---------------------------------------------------------------------------
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i += 1;
+        continue;
+      }
+      field += c;
+      i += 1;
+      continue;
+    }
+    if (c === '"') {
+      inQuotes = true;
+      i += 1;
+      continue;
+    }
+    if (c === ",") {
+      row.push(field);
+      field = "";
+      i += 1;
+      continue;
+    }
+    if (c === "\r") {
+      i += 1;
+      continue;
+    }
+    if (c === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      i += 1;
+      continue;
+    }
+    field += c;
+    i += 1;
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function loadCsvRecords(path: string): Record<string, string>[] {
+  const raw = readFileSync(path, "utf8").replace(/^﻿/, "");
+  const table = parseCsv(raw);
+  const header = table[0]!;
+  return table.slice(1).map((cells) => {
+    const record: Record<string, string> = {};
+    header.forEach((key, idx) => {
+      record[key] = cells[idx] ?? "";
+    });
+    return record;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Source JSON -> PricingProfileImportInput
+// ---------------------------------------------------------------------------
+interface HoldBack {
+  sku: string;
+  title: string;
+  reason: string;
+}
+
+function transformProfile(
+  shopDomain: string,
+  title: string,
+  profile: any,
+): { input: PricingProfileImportInput } | { error: string } {
+  const sku = profile.sku;
+  if (typeof sku !== "string" || sku.trim().length === 0) {
+    return { error: "profile JSON has no sku" };
+  }
+
+  const quantityBreaks = Array.isArray(profile.quantityBreaks) ? profile.quantityBreaks : [];
+  if (quantityBreaks.length === 0) {
+    return { error: "no quantityBreaks in source JSON" };
+  }
+
+  const sourceProductionRules = Array.isArray(profile.productionRules) ? profile.productionRules : [];
+  if (sourceProductionRules.length === 0) {
+    return { error: "no productionRules in source JSON" };
+  }
+
+  const sourcePackagingRules = Array.isArray(profile.packagingRules) ? profile.packagingRules : [];
+  if (sourcePackagingRules.length === 0) {
+    return { error: "no packagingRules in source JSON" };
+  }
+
+  const decorationRules: DecorationRuleInput[] = [];
+  for (const group of Array.isArray(profile.decorationRules) ? profile.decorationRules : []) {
+    const method = METHOD_MAP[group.method];
+    if (!method) {
+      return { error: `unrecognized decoration method "${group.method}" (group "${group.id}")` };
+    }
+    for (const charge of Array.isArray(group.charges) ? group.charges : []) {
+      const chargeBasis = CHARGE_TYPE_MAP[charge.chargeType];
+      if (!chargeBasis) {
+        return {
+          error: `unrecognized decoration chargeType "${charge.chargeType}" (${group.id}/${charge.id})`,
+        };
+      }
+      decorationRules.push({
+        method,
+        code: `${group.id}_${charge.id}`.toUpperCase(),
+        name: charge.label,
+        chargeBasis,
+        listPriceCents: charge.listPriceCents,
+        netPriceCents: charge.netPriceCents,
+        sortOrder: decorationRules.length,
+      });
+    }
+  }
+
+  const optionGroups: OptionGroupInput[] = (Array.isArray(profile.optionGroups) ? profile.optionGroups : []).map(
+    (group: any, groupIndex: number) => ({
+      name: group.name,
+      kind: OptionGroupKind.GENERIC,
+      sortOrder: groupIndex,
+      categoryPriceAdjustmentCents: null,
+      values: (Array.isArray(group.options) ? group.options : []).map((option: any, valueIndex: number) => ({
+        code: option.id ?? null,
+        label: option.name,
+        priceAdjustmentCents: option.listPriceAdjustmentCents ?? null,
+        netPriceAdjustmentCents: option.netPriceAdjustmentCents ?? null,
+        isDefault: option.includedInBasePrice === true,
+        sortOrder: valueIndex,
+      })),
+    }),
+  );
+
+  const productionRules: ProductionRuleInput[] = sourceProductionRules.map((p: any) => ({
+    code: String(p.id).toUpperCase(),
+    name: p.name,
+    isRush: p.mode === "rush",
+    minBusinessDays: p.leadTimeMinBusinessDays,
+    maxBusinessDays: p.leadTimeMaxBusinessDays ?? null,
+    feeCents: p.priceAdjustmentCents ?? null,
+    feeType: ProductionFeeType.FLAT,
+    notes: p.pricingNote ?? p.sourceText ?? null,
+  }));
+
+  const packagingRules: PackagingRuleInput[] = sourcePackagingRules.map((p: any) => ({
+    code: String(p.id).toUpperCase(),
+    name: p.name,
+    unitsPerPackage: p.unitsPerCarton ?? null,
+    cartonWeightLbs: p.cartonWeightLbs ?? null,
+    lengthIn: p.cartonLengthInches ?? null,
+    widthIn: p.cartonWidthInches ?? null,
+    heightIn: p.cartonHeightInches ?? null,
+    feeCents: null,
+    notes: p.source ?? (Array.isArray(p.cartonMappingIds) ? p.cartonMappingIds.join(", ") : null),
+  }));
+
+  // PricingProfile.name must be unique per store, but the source catalog reuses the
+  // exact same generic title across genuinely distinct SKUs (e.g. every width of
+  // "Polyester Lanyards with Detachable Buckle Release" shares one title) — so the
+  // SKU, which IS guaranteed unique, is always appended rather than relied on only
+  // when a collision happens to occur.
+  const name = title ? `${title} (${sku})` : sku;
+
+  const input: PricingProfileImportInput = {
+    shopDomain,
+    sku,
+    name,
+    description: `Imported from ImprintID catalog pricing sync (source sync status: ${profile.syncStatus}).`,
+    isDefault: true,
+    currency: profile.currency ?? "USD",
+    quantityTiers: quantityBreaks.map((t: any) => ({
+      minQuantity: t.minQuantity,
+      maxQuantity: t.maxQuantity ?? null,
+      listPriceCents: t.listPriceCents,
+      netPriceCents: t.netPriceCents,
+    })),
+    decorationRules,
+    optionGroups,
+    productionRules,
+    packagingRules,
+  };
+
+  return { input };
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+async function main() {
+  const args = process.argv.slice(2);
+  const csvPath = args.find((a) => !a.startsWith("--"));
+  const shopArgIndex = args.indexOf("--shop");
+  const shopDomain = shopArgIndex >= 0 ? args[shopArgIndex + 1]! : (process.env.SEED_SHOP_DOMAIN?.trim() || DEFAULT_SHOP_DOMAIN);
+  const dryRun = args.includes("--dry-run");
+
+  if (!csvPath) {
+    console.error("Usage: node scripts/import-catalog-pricing.ts <path-to-csv> [--shop <shopDomain>] [--dry-run]");
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(`Reading: ${csvPath}`);
+  console.log(`Target shop: ${shopDomain}${dryRun ? " (DRY RUN — nothing will be written)" : ""}\n`);
+
+  const records = loadCsvRecords(csvPath);
+
+  const candidates: { title: string; profile: any; status: string }[] = [];
+  for (const row of records) {
+    const raw = (row[PROFILE_COLUMN] ?? "").trim();
+    if (!raw) continue;
+    let profile: any;
+    try {
+      profile = JSON.parse(raw);
+    } catch (e) {
+      console.warn(`Skipping row (unparseable pricing JSON): ${row["Title"] ?? "(no title)"}`);
+      continue;
+    }
+    candidates.push({ title: row["Title"] ?? "", profile, status: (row[STATUS_COLUMN] ?? "").trim() });
+  }
+
+  console.log(`Found ${candidates.length} products with a pricing profile in the source file.\n`);
+
+  const holdBacks: HoldBack[] = [];
+  const toImport: { title: string; input: PricingProfileImportInput }[] = [];
+
+  for (const { title, profile, status } of candidates) {
+    const sku = typeof profile.sku === "string" ? profile.sku : "(unknown sku)";
+    if (status !== "ready_exact_match") {
+      holdBacks.push({ sku, title, reason: `sync status is "${status}", not an exact match` });
+      continue;
+    }
+    const result = transformProfile(shopDomain, title, profile);
+    if ("error" in result) {
+      holdBacks.push({ sku, title, reason: result.error });
+      continue;
+    }
+    toImport.push({ title, input: result.input });
+  }
+
+  console.log(`Ready to import: ${toImport.length}`);
+  console.log(`Held back: ${holdBacks.length}\n`);
+
+  if (dryRun) {
+    console.log("--- DRY RUN: would import ---");
+    for (const { input } of toImport) {
+      console.log(`  ${input.sku} — ${input.name}`);
+    }
+  } else {
+    const prisma = new PrismaClient();
+    let imported = 0;
+    try {
+      for (const { input } of toImport) {
+        try {
+          const result = await importPricingProfile(prisma, input);
+          imported += 1;
+          console.log(
+            `  imported ${result.sku}: ${result.counts.quantityTiers} tiers, ` +
+              `${result.counts.decorationRules} decoration rules, ${result.counts.optionGroups} option groups ` +
+              `(${result.counts.optionValues} values), ${result.counts.productionRules} production rules, ` +
+              `${result.counts.packagingRules} packaging rules — revision ${result.revision}` +
+              (result.revisionChanged ? "" : " (unchanged)"),
+          );
+        } catch (e) {
+          if (e instanceof PricingImportValidationError) {
+            holdBacks.push({
+              sku: input.sku,
+              title: input.name,
+              reason: `validation failed: ${e.issues.map((i) => `${i.path} ${i.message}`).join("; ")}`,
+            });
+            continue;
+          }
+          // Any other error (e.g. a DB constraint violation) is per-SKU and must not
+          // abort the rest of an otherwise-independent batch — see the resulting
+          // report for what to fix and re-run.
+          const message = e instanceof Error ? e.message.split("\n")[0] : String(e);
+          holdBacks.push({ sku: input.sku, title: input.name, reason: `import failed: ${message}` });
+        }
+      }
+    } finally {
+      await prisma.$disconnect();
+    }
+    console.log(`\nImported ${imported} of ${toImport.length} candidate products.`);
+  }
+
+  console.log(`\n--- Held back (${holdBacks.length}) — not imported, needs source data or a decision ---`);
+  for (const hb of holdBacks) {
+    console.log(`  ${hb.sku} (${hb.title || "no title"}): ${hb.reason}`);
+  }
+}
+
+main();

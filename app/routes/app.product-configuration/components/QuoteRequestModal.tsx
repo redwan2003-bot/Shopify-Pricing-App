@@ -1,14 +1,20 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useRef, useState } from "react";
+import type { FormEvent } from "react";
+import { Modal, TitleBar } from "@shopify/app-bridge-react";
+import type { SelectedConfigurationRow } from "../../../lib/product-configuration/view-model.ts";
 import styles from "../styles.module.css";
 
 export interface QuoteRequestModalProps {
   productTitle: string;
   sku: string;
-  configurationSummary: Array<{ label: string; value: string }>;
+  /** The shared, normalized selected-configuration rows (same view model the Price
+   * Summary renders) — not a separately hand-built label set. */
+  configurationSummary: SelectedConfigurationRow[];
   onClose: () => void;
 }
 
 const ARTWORK_STATUS_OPTIONS = ["Artwork ready", "Artwork needs revision", "No artwork yet"];
+const MODAL_ID = "imprintid-quote-request-modal";
 
 /**
  * Quote-request placeholder (STEP 14). Captures the fields the task specifies (product
@@ -16,6 +22,13 @@ const ARTWORK_STATUS_OPTIONS = ["Artwork ready", "Artwork needs revision", "No a
  * additional notes) but — per explicit instruction — does NOT submit to any backend.
  * Submitting only shows a local confirmation panel; nothing is sent over the network or
  * persisted. A real quote pipeline (CRM/email/ticket integration) is a later phase.
+ *
+ * Rendered as a Shopify App Bridge `Modal` + `TitleBar` (this route runs embedded in
+ * Shopify Admin). App Bridge renders the overlay at the top level of Admin — centred in
+ * the merchant's real viewport, dimming the whole interface, with a focus trap and X /
+ * Escape / backdrop dismissal that all fire `onHide`. The previous hand-rolled
+ * `position: fixed` overlay could not escape the embedded-app iframe, so it appeared
+ * off-screen on a scrolled page.
  */
 export function QuoteRequestModal({ productTitle, sku, configurationSummary, onClose }: QuoteRequestModalProps) {
   const [submitted, setSubmitted] = useState(false);
@@ -24,30 +37,24 @@ export function QuoteRequestModal({ productTitle, sku, configurationSummary, onC
   const [shippingDestination, setShippingDestination] = useState("");
   const [artworkStatus, setArtworkStatus] = useState(ARTWORK_STATUS_OPTIONS[0]);
   const [notes, setNotes] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
 
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitted) return; // pending-state protection: a second submission is never processed
+    setSubmitted(true);
+  }
 
   return (
-    <div className={styles.modalBackdrop}>
-      <button type="button" className={styles.modalBackdropClose} aria-label="Close dialog" onClick={onClose} />
-      <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="quote-modal-heading">
-        <h2 className={styles.modalHeading} id="quote-modal-heading">
-          Request a Quote
-        </h2>
-
+    <Modal id={MODAL_ID} open onHide={onClose} variant="base">
+      <div className={styles.modalBody}>
         <dl className={styles.modalSummaryList}>
           <dt>Product</dt>
           <dd>{productTitle}</dd>
           <dt>SKU</dt>
           <dd>{sku}</dd>
           {configurationSummary.map((row) => (
-            <Fragment key={row.label}>
+            <Fragment key={row.key}>
               <dt>{row.label}</dt>
               <dd>{row.value}</dd>
             </Fragment>
@@ -60,13 +67,7 @@ export function QuoteRequestModal({ productTitle, sku, configurationSummary, onC
             no request was actually sent.
           </div>
         ) : (
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              setSubmitted(true);
-            }}
-            style={{ display: "flex", flexDirection: "column", gap: 12 }}
-          >
+          <form ref={formRef} id="imprintid-quote-request-form" onSubmit={handleSubmit} className={styles.modalForm}>
             <div className={styles.modalField}>
               <label htmlFor="quote-name">Customer name</label>
               <input id="quote-name" value={name} onChange={(e) => setName(e.target.value)} required />
@@ -109,25 +110,24 @@ export function QuoteRequestModal({ productTitle, sku, configurationSummary, onC
               <label htmlFor="quote-notes">Additional notes</label>
               <textarea id="quote-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
-            <div className={styles.modalActions}>
-              <button type="button" className={styles.secondaryButton} onClick={onClose}>
-                Cancel
-              </button>
-              <button type="submit" className={styles.primaryButton}>
-                Submit Request
-              </button>
-            </div>
           </form>
         )}
-
-        {submitted ? (
-          <div className={styles.modalActions}>
-            <button type="button" className={styles.secondaryButton} onClick={onClose}>
-              Close
-            </button>
-          </div>
-        ) : null}
       </div>
-    </div>
+
+      <TitleBar title="Request a Quote">
+        {submitted ? (
+          <button variant="primary" onClick={onClose}>
+            Close
+          </button>
+        ) : (
+          <>
+            <button onClick={onClose}>Cancel</button>
+            <button variant="primary" onClick={() => formRef.current?.requestSubmit()}>
+              Submit Request
+            </button>
+          </>
+        )}
+      </TitleBar>
+    </Modal>
   );
 }

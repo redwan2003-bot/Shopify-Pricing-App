@@ -52,6 +52,10 @@ export interface PricingCatalogOptionValue {
    * storefront can display a price without re-implementing this precedence itself.
    */
   resolvedPriceCents: number | null;
+  /** The NET price this option would actually charge at checkout — distinct from
+   * `resolvedPriceCents` (list) only when the source data supplied a separate net
+   * figure for this option. Same null convention as `resolvedPriceCents`. */
+  resolvedNetPriceCents: number | null;
   /** Which field `resolvedPriceCents` came from — `"option"` (this value's own
    * price), `"category"` (the enclosing group's `categoryPriceAdjustmentCents`), or
    * `"unavailable"` (neither was supplied; selecting this option would fail
@@ -103,8 +107,18 @@ export interface PricingCatalogProductionRule {
   notes: string | null;
 }
 
+/** Task 4A: canonical Shopify identity + how the profile was resolved. Present only
+ * when the caller supplied Shopify product/variant ids (the storefront always does);
+ * `null` for a legacy SKU-only catalog lookup. Internal DB ids are never included. */
+export interface PricingCatalogIdentity {
+  shopifyProductId: string;
+  shopifyVariantId: string;
+  resolutionSource: "product_override" | "sku";
+}
+
 export interface PricingCatalog {
   sku: string | null;
+  identity: PricingCatalogIdentity | null;
   quantityTiers: PricingCatalogQuantityTier[];
   productColors: PricingCatalogProductColor[];
   decorationMethods: string[];
@@ -113,16 +127,40 @@ export interface PricingCatalog {
   productionRules: PricingCatalogProductionRule[];
 }
 
+export interface LoadPricingCatalogRef {
+  sku: string;
+  /** Validated bare decimal id (see product-resolver.ts). Enables ProductPricingOverride
+   * resolution and populates `identity` on the response. */
+  shopifyProductId?: string | null;
+  /** Validated bare decimal id — echoed into `identity` only; not used to price. */
+  shopifyVariantId?: string | null;
+}
+
 export async function loadPricingCatalog(
   prisma: PrismaClient,
   shopDomain: string,
-  sku: string,
+  ref: string | LoadPricingCatalogRef,
 ): Promise<PricingCatalog> {
-  const { profile } = await loadPricingContext(prisma, { shopDomain, sku });
+  const normalized: LoadPricingCatalogRef = typeof ref === "string" ? { sku: ref } : ref;
+  const { profile, source } = await loadPricingContext(prisma, {
+    shopDomain,
+    sku: normalized.sku,
+    shopifyProductId: normalized.shopifyProductId ?? null,
+  });
+
+  const identity: PricingCatalogIdentity | null =
+    normalized.shopifyProductId && normalized.shopifyVariantId
+      ? {
+          shopifyProductId: normalized.shopifyProductId,
+          shopifyVariantId: normalized.shopifyVariantId,
+          resolutionSource: source.resolvedVia === "override" ? "product_override" : "sku",
+        }
+      : null;
 
   const decorationMethods = [...new Set(profile.decorationRules.map((r) => r.method))];
 
   return {
+    identity,
     sku: profile.sku,
     quantityTiers: [...profile.quantityTiers]
       .sort((a, b) => a.minQuantity - b.minQuantity)
@@ -135,6 +173,8 @@ export async function loadPricingCatalog(
       })),
     productColors: profile.productColors
       .filter((c) => c.isActive)
+      .slice()
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
       .map((c) => ({
         code: c.code,
         name: c.name,
@@ -167,6 +207,7 @@ export async function loadPricingCatalog(
           priceCode: v.priceCode,
           priceAdjustmentCents: v.priceAdjustmentCents,
           resolvedPriceCents: resolved.cents,
+          resolvedNetPriceCents: resolved.netCents,
           priceSource: resolved.source,
         };
       }),

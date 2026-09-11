@@ -1,0 +1,688 @@
+{
+  "secret": "task-5b1-golden-vector-secret-not-for-production",
+  "note": "Task 5B.1 shared golden vectors. No real secrets/product ids/customer data. The application signer (cart-signature) and the Function verifier (verify-payload-v2) both assert against this file.",
+  "vectors": [
+    {
+      "name": "base-only",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":0,\"lineTotalCents\":13700,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=0\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=13700\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "c611a27e6d8103d9522baae51a8ed6a5e42f2c68e9e5514ea7182a8ac0c30cd4",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "valid"
+    },
+    {
+      "name": "per-unit-surcharge",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":20,\"flatSurchargeCents\":0,\"lineTotalCents\":15700,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=0\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=15700\nperUnitSurchargeCents=20\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "46d3e1a2b32b92b00123240eda9c85f076bd3366f613c89433b1d85269548b16",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "valid"
+    },
+    {
+      "name": "flat-surcharge",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "7474f1e15199a463eccc80ef8feb29bfc7b80e741a2e3c26048cfc7f2b30d831",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "valid"
+    },
+    {
+      "name": "both-surcharges",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":24,\"flatSurchargeCents\":8900,\"lineTotalCents\":25000,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=8900\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=25000\nperUnitSurchargeCents=24\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "7293b93534055e1c945f315b1eb196d501711ecbf3ef7f1c528c718f1befbcf0",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "valid"
+    },
+    {
+      "name": "blank-sku-config",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "7474f1e15199a463eccc80ef8feb29bfc7b80e741a2e3c26048cfc7f2b30d831",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "valid"
+    },
+    {
+      "name": "non-ascii-config",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:f1e40240732c78d0b433e3bf0f0c8e105ba41f87d4e471c93f41332def229d2b\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"note\":\"Bleu marine — éclair ✦ 中文\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:f1e40240732c78d0b433e3bf0f0c8e105ba41f87d4e471c93f41332def229d2b\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "fdb9d4156227e27c4d04411dbe2164896cb1dbd0c5c00e4fbbb3380f4d259bf8",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "valid"
+    },
+    {
+      "name": "reordered-keys-same-sig",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "7474f1e15199a463eccc80ef8feb29bfc7b80e741a2e3c26048cfc7f2b30d831",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "valid"
+    },
+    {
+      "name": "wrong-product",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/1\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/1\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "de5aa64d46fdd7102aeefe00e25525c395e890d9c908ee592fef5c91406a6e06",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "product_mismatch"
+    },
+    {
+      "name": "wrong-variant",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/1\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/1",
+      "signature": "bf63b56ec3e320821ce0f076e33281cba6d5c4c20993fd3c71403e44661025f6",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "variant_mismatch"
+    },
+    {
+      "name": "wrong-quantity",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":200,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":31900,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=31900\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=200\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "5476290eaf18c32a027c58850d888827651805519c45a3423e16d003977701a4",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "quantity_mismatch"
+    },
+    {
+      "name": "wrong-currency",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"EUR\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=EUR\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "065239cae2604b9554774958840742f2e547af8090aed195acf2dbf816ce96fc",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "currency_mismatch"
+    },
+    {
+      "name": "wrong-profile-revision",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":11,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=11\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "c3c6162639db8b08331332aab51af518adb966bde5367ad98002be83c4319ecc",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "profile_revision_mismatch"
+    },
+    {
+      "name": "wrong-policy-revision",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":6,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=6\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "c108b0910d249bf09a0491d488d74dc4b53fa93c548c00d4546af092705ae78f",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "policy_revision_mismatch"
+    },
+    {
+      "name": "wrong-adjustment-variant",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/2\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/2\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "ed6011f199891afc78309de71871d94951b5f2ba3b5a2dedfbbbfb821252e06f",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "adjustment_mismatch"
+    },
+    {
+      "name": "install-mismatch",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"someone-elses-install\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=someone-elses-install\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "c74c7abb0f36ec97a86ce92739433df63a191aea995c99cc08982259a7bb79a3",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "install_mismatch"
+    },
+    {
+      "name": "invalid-signature",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "0000000000000000000000000000000000000000000000000000000000000000",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "bad_signature"
+    },
+    {
+      "name": "line-total-mismatch",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":999999,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=999999\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "d6b65aedd290125cbe5e6be400dcce218fbe53dbabf24ac9fd7bb48f7b307782",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "line_total_mismatch"
+    },
+    {
+      "name": "modified-config-json",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-c\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "7474f1e15199a463eccc80ef8feb29bfc7b80e741a2e3c26048cfc7f2b30d831",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "config_digest_mismatch"
+    },
+    {
+      "name": "malformed-payload-json",
+      "payloadJson": "{not-json",
+      "configJson": "{}",
+      "canonical": "",
+      "signature": "0000000000000000000000000000000000000000000000000000000000000000",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "malformed"
+    },
+    {
+      "name": "unknown-extra-field",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000,\"attackerField\":1}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nattackerField=1\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "e21deff5211678ef5892c9ba7769c864c7647c50629ed470853b34b254dde27a",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "malformed"
+    },
+    {
+      "name": "unsafe-integer-base-price",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":9007199254740991,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":0,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"quoteId\":\"q-fixed-0001\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=9007199254740991\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=0\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nquoteId=q-fixed-0001\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "33bd56ee1dd7d05ce256d848cb6c3abd75d69eb81dfcbcc8c9eb0f16f7391459",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "monetary_invariant"
+    },
+    {
+      "name": "missing-required-field",
+      "payloadJson": "{\"v\":2,\"installBinding\":\"install-binding-abc123\",\"productGid\":\"gid://shopify/Product/9442404663548\",\"variantGid\":\"gid://shopify/ProductVariant/111\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":4500,\"lineTotalCents\":18200,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/999\",\"profileRef\":\"prof_LNY01\",\"profileRevision\":12,\"policyRevision\":7,\"configDigest\":\"sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\",\"issuedAtServer\":1700000000}",
+      "configJson": "{\"decorationChargeCodes\":[\"SB01\",\"SC01\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[\"opt-a\",\"opt-b\"],\"packagingCode\":null,\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}",
+      "canonical": "adjustmentVariantGid=gid://shopify/ProductVariant/999\nbaseUnitPriceCents=137\nconfigDigest=sha256:2622879a4b6b4a123ae21fedeca964ceba75f8f8c4b2fd29950a9a5cfcd79c76\ncurrency=USD\nflatSurchargeCents=4500\ninstallBinding=install-binding-abc123\nissuedAtServer=1700000000\nlineTotalCents=18200\nperUnitSurchargeCents=0\npolicyRevision=7\nproductGid=gid://shopify/Product/9442404663548\nprofileRef=prof_LNY01\nprofileRevision=12\nquantity=100\nv=2\nvariantGid=gid://shopify/ProductVariant/111",
+      "signature": "d785ba1466516328e0df03fda2bad7796e4503a80e2260c5e105857ef2a0aba8",
+      "line": {
+        "quantity": 100,
+        "variantGid": "gid://shopify/ProductVariant/111",
+        "productGid": "gid://shopify/Product/9442404663548",
+        "currencyCode": "USD"
+      },
+      "shopPolicy": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "allowLegacyV1": false,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/999",
+        "installBinding": "install-binding-abc123",
+        "policyRevision": 7
+      },
+      "productPolicy": {
+        "schema": 1,
+        "required": true,
+        "profileRef": "prof_LNY01",
+        "profileRevision": 12,
+        "active": true,
+        "policyRevision": 7
+      },
+      "expect": "malformed"
+    }
+  ]
+}

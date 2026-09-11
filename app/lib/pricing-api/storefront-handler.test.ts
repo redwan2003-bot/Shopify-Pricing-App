@@ -15,6 +15,18 @@ import type { PricingProfileImportInput } from "../pricing-import/types.ts";
  * reassigned the string `"undefined"`. Used by every cart-pricing test below so env
  * vars never leak between test cases regardless of run order.
  */
+/**
+ * Task 5B.1.1: the storefront only issues a v1 quote under an explicit non-production
+ * transition authorization. Tests that exercise the v1 SIGNING guards (missing/blank
+ * secret, bad adjustment variant, …) must set this so the v1 path is actually reached
+ * and it is the guard — not "no envelope selected" — that produces `cartPricing: null`.
+ */
+const V1_TRANSITION_ENV = {
+  NODE_ENV: "test",
+  IMPRINTID_ALLOW_LEGACY_CART_PRICING_V1: "true",
+  IMPRINTID_CART_ENVELOPE_VERSION: "1",
+} as const;
+
 async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
   const saved: Record<string, string | undefined> = {};
   for (const key of Object.keys(vars)) saved[key] = process.env[key];
@@ -285,7 +297,7 @@ test("11. no shopifyVariantId in the request -> cartPricing is null (existing ca
 });
 
 test("12. shopifyVariantId given but IMPRINTID_CART_SIGNING_SECRET/IMPRINTID_ADJUSTMENT_VARIANT_ID unset -> cartPricing is null, not an error", async () => {
-  await withEnv({ IMPRINTID_CART_SIGNING_SECRET: undefined, IMPRINTID_ADJUSTMENT_VARIANT_ID: undefined }, async () => {
+  await withEnv({ ...V1_TRANSITION_ENV, IMPRINTID_CART_SIGNING_SECRET: undefined, IMPRINTID_ADJUSTMENT_VARIANT_ID: undefined }, async () => {
     const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, {
       sku: SKU,
       quantity: 100,
@@ -300,6 +312,7 @@ test("12. shopifyVariantId given but IMPRINTID_CART_SIGNING_SECRET/IMPRINTID_ADJ
 test("12b. SHOPIFY_API_SECRET set alone (no IMPRINTID_CART_SIGNING_SECRET) -> cartPricing is null — no fallback between the two secrets", async () => {
   await withEnv(
     {
+      ...V1_TRANSITION_ENV,
       SHOPIFY_API_SECRET: "an-oauth-secret-that-must-never-sign-cart-pricing",
       IMPRINTID_CART_SIGNING_SECRET: undefined,
       IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999",
@@ -318,7 +331,7 @@ test("12b. SHOPIFY_API_SECRET set alone (no IMPRINTID_CART_SIGNING_SECRET) -> ca
 
 test("12c. a blank IMPRINTID_CART_SIGNING_SECRET fails closed", async () => {
   await withEnv(
-    { IMPRINTID_CART_SIGNING_SECRET: "   ", IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999" },
+    { ...V1_TRANSITION_ENV, IMPRINTID_CART_SIGNING_SECRET: "   ", IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999" },
     async () => {
       const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, {
         sku: SKU,
@@ -333,7 +346,7 @@ test("12c. a blank IMPRINTID_CART_SIGNING_SECRET fails closed", async () => {
 
 test("12d. an IMPRINTID_CART_SIGNING_SECRET with leading/trailing whitespace fails closed, end to end", async () => {
   await withEnv(
-    { IMPRINTID_CART_SIGNING_SECRET: " valid-secret ", IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999" },
+    { ...V1_TRANSITION_ENV, IMPRINTID_CART_SIGNING_SECRET: " valid-secret ", IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999" },
     async () => {
       const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, {
         sku: SKU,
@@ -348,7 +361,7 @@ test("12d. an IMPRINTID_CART_SIGNING_SECRET with leading/trailing whitespace fai
 
 test("12e. a valid secret with an invalid adjustment-variant id (bare numeric) fails closed", async () => {
   await withEnv(
-    { IMPRINTID_CART_SIGNING_SECRET: "test-secret-for-storefront-handler", IMPRINTID_ADJUSTMENT_VARIANT_ID: "51028460460" },
+    { ...V1_TRANSITION_ENV, IMPRINTID_CART_SIGNING_SECRET: "test-secret-for-storefront-handler", IMPRINTID_ADJUSTMENT_VARIANT_ID: "51028460460" },
     async () => {
       const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, {
         sku: SKU,
@@ -361,11 +374,15 @@ test("12e. a valid secret with an invalid adjustment-variant id (bare numeric) f
   );
 });
 
-test("13. shopifyVariantId given and secret/adjustment variant configured -> a genuinely signed cartPricing payload is returned", async () => {
+test("13. shopifyVariantId given + secret/adjustment variant configured + a CONTROLLED non-production v1 transition -> a genuinely signed v1 cartPricing payload is returned", async () => {
   await withEnv(
     {
       IMPRINTID_CART_SIGNING_SECRET: "test-secret-for-storefront-handler",
       IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999",
+      // Task 5B.1.1: v1 is issued ONLY under this explicit non-production authorization.
+      NODE_ENV: "test",
+      IMPRINTID_ALLOW_LEGACY_CART_PRICING_V1: "true",
+      IMPRINTID_CART_ENVELOPE_VERSION: "1",
     },
     async () => {
       const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, {
@@ -401,13 +418,167 @@ test("13. shopifyVariantId given and secret/adjustment variant configured -> a g
 
 test("14. an empty-string shopifyVariantId is treated the same as omitted -> cartPricing is null", async () => {
   await withEnv(
-    { IMPRINTID_CART_SIGNING_SECRET: "test-secret", IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999" },
+    { ...V1_TRANSITION_ENV, IMPRINTID_CART_SIGNING_SECRET: "test-secret", IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999" },
     async () => {
       const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, { sku: SKU, quantity: 100, shopifyVariantId: "" });
       assert.equal(result.body.ok, true);
       if (result.body.ok) assert.equal(result.body.data.cartPricing, null);
     },
   );
+});
+
+// --- Task 5B.1.1: envelope selection (no silent v1 default) --------------------------
+
+test("5B.1.1 selectCartEnvelope: absent version -> 'none'; unsupported -> 'none'; '2' -> 'v2'", async () => {
+  const { selectCartEnvelope } = await import("./storefront-handler.ts");
+  await withEnv({ IMPRINTID_CART_ENVELOPE_VERSION: undefined, IMPRINTID_ALLOW_LEGACY_CART_PRICING_V1: undefined, NODE_ENV: "test" }, async () => {
+    assert.equal(selectCartEnvelope(), "none");
+  });
+  await withEnv({ IMPRINTID_CART_ENVELOPE_VERSION: "3", NODE_ENV: "test" }, async () => {
+    assert.equal(selectCartEnvelope(), "none");
+  });
+  await withEnv({ IMPRINTID_CART_ENVELOPE_VERSION: "2", NODE_ENV: "test" }, async () => {
+    assert.equal(selectCartEnvelope(), "v2");
+  });
+});
+
+test("5B.1.1 selectCartEnvelope: '1' needs ALL of: not production, ALLOW flag 'true', version exactly '1'", async () => {
+  const { selectCartEnvelope } = await import("./storefront-handler.ts");
+  // version '1' but no ALLOW flag -> none
+  await withEnv({ IMPRINTID_CART_ENVELOPE_VERSION: "1", IMPRINTID_ALLOW_LEGACY_CART_PRICING_V1: undefined, NODE_ENV: "test" }, async () => {
+    assert.equal(selectCartEnvelope(), "none");
+  });
+  // version '1' + ALLOW but PRODUCTION -> none (production never issues v1)
+  await withEnv({ IMPRINTID_CART_ENVELOPE_VERSION: "1", IMPRINTID_ALLOW_LEGACY_CART_PRICING_V1: "true", NODE_ENV: "production" }, async () => {
+    assert.equal(selectCartEnvelope(), "none");
+  });
+  // version '1' + ALLOW 'yes' (not exactly 'true') -> none
+  await withEnv({ IMPRINTID_CART_ENVELOPE_VERSION: "1", IMPRINTID_ALLOW_LEGACY_CART_PRICING_V1: "yes", NODE_ENV: "test" }, async () => {
+    assert.equal(selectCartEnvelope(), "none");
+  });
+  // all three satisfied -> v1
+  await withEnv({ IMPRINTID_CART_ENVELOPE_VERSION: "1", IMPRINTID_ALLOW_LEGACY_CART_PRICING_V1: "true", NODE_ENV: "test" }, async () => {
+    assert.equal(selectCartEnvelope(), "v1");
+  });
+});
+
+test("5B.1.1: a request with a variant id + valid secret but NO envelope version -> cartPricing is null (no silent v1)", async () => {
+  await withEnv(
+    {
+      IMPRINTID_CART_SIGNING_SECRET: "test-secret-for-storefront-handler",
+      IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999",
+      IMPRINTID_CART_ENVELOPE_VERSION: undefined,
+      IMPRINTID_ALLOW_LEGACY_CART_PRICING_V1: undefined,
+      NODE_ENV: "test",
+    },
+    async () => {
+      const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, { sku: SKU, quantity: 100, shopifyVariantId: "gid://shopify/ProductVariant/1" });
+      assert.equal(result.body.ok, true);
+      if (result.body.ok) assert.equal(result.body.data.cartPricing, null);
+    },
+  );
+});
+
+test("5B.1.1: an UNSUPPORTED envelope version fails closed -> cartPricing is null", async () => {
+  await withEnv(
+    {
+      IMPRINTID_CART_SIGNING_SECRET: "test-secret-for-storefront-handler",
+      IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999",
+      IMPRINTID_CART_ENVELOPE_VERSION: "v2",
+      NODE_ENV: "test",
+    },
+    async () => {
+      const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, { sku: SKU, quantity: 100, shopifyVariantId: "gid://shopify/ProductVariant/1" });
+      assert.equal(result.body.ok, true);
+      if (result.body.ok) assert.equal(result.body.data.cartPricing, null);
+    },
+  );
+});
+
+test("5B.1.1: production runtime never issues a v1 quote even with the ALLOW flag + version '1'", async () => {
+  await withEnv(
+    {
+      IMPRINTID_CART_SIGNING_SECRET: "test-secret-for-storefront-handler",
+      IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999",
+      IMPRINTID_CART_ENVELOPE_VERSION: "1",
+      IMPRINTID_ALLOW_LEGACY_CART_PRICING_V1: "true",
+      NODE_ENV: "production",
+    },
+    async () => {
+      const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, { sku: SKU, quantity: 100, shopifyVariantId: "gid://shopify/ProductVariant/1" });
+      assert.equal(result.body.ok, true);
+      if (result.body.ok) assert.equal(result.body.data.cartPricing, null);
+    },
+  );
+});
+
+test("5B.1.1: envelope '2' attempts v2 but fails closed (null policy provider) -> cartPricing is null, never downgraded to v1", async () => {
+  await withEnv(
+    {
+      IMPRINTID_CART_SIGNING_SECRET: "test-secret-for-storefront-handler",
+      IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/999",
+      IMPRINTID_CART_ENVELOPE_VERSION: "2",
+      NODE_ENV: "test",
+    },
+    async () => {
+      const result = await handleStorefrontPricingRequest(
+        prisma,
+        SHOP_DOMAIN,
+        { sku: SKU, quantity: 100, shopifyVariantId: "gid://shopify/ProductVariant/1", shopifyProductId: "9442404663548" },
+        { shopifyProductId: "9442404663548", shopifyVariantId: "1" },
+      );
+      assert.equal(result.body.ok, true);
+      if (result.body.ok) assert.equal(result.body.data.cartPricing, null);
+    },
+  );
+});
+
+// --- Task 4A: identity echo + blank-SKU-via-product-override --------------------------
+
+const LNY01_PRODUCT_ID = "9442404663548"; // the real LNY01 Shopify product id (has an active ProductPricingOverride)
+
+test("4A. a request identity is echoed back with the resolution source", async () => {
+  const result = await handleStorefrontPricingRequest(
+    prisma,
+    SHOP_DOMAIN,
+    { sku: SKU, quantity: 100 },
+    { shopifyProductId: LNY01_PRODUCT_ID, shopifyVariantId: "51028263796988" },
+  );
+  assert.equal(result.body.ok, true);
+  if (result.body.ok) {
+    assert.deepEqual(result.body.data.identity, {
+      shopifyProductId: LNY01_PRODUCT_ID,
+      shopifyVariantId: "51028263796988",
+      resolutionSource: "sku",
+    });
+  }
+});
+
+test("4A. a BLANK sku plus the LNY01 product id prices via the active ProductPricingOverride (resolutionSource product_override)", async () => {
+  const result = await handleStorefrontPricingRequest(
+    prisma,
+    SHOP_DOMAIN,
+    { sku: "", quantity: 100, shopifyProductId: LNY01_PRODUCT_ID },
+    { shopifyProductId: LNY01_PRODUCT_ID, shopifyVariantId: "51028263796988" },
+  );
+  assert.equal(result.status, 200);
+  assert.equal(result.body.ok, true);
+  if (result.body.ok) {
+    assert.equal(result.body.data.base.listUnitPriceCents, 229, "same real LNY01 pricing as the SKU path");
+    assert.equal(result.body.data.identity!.resolutionSource, "product_override");
+  }
+});
+
+test("4A. a blank sku with NO shopifyProductId is still rejected (400)", async () => {
+  const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, { sku: "", quantity: 100 });
+  assert.equal(result.status, 400);
+  if (!result.body.ok) assert.equal(result.body.error.code, "INVALID_REQUEST_BODY");
+});
+
+test("4A. no request identity -> identity is null (legacy callers unaffected)", async () => {
+  const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, { sku: SKU, quantity: 100 });
+  assert.equal(result.body.ok, true);
+  if (result.body.ok) assert.equal(result.body.data.identity, null);
 });
 
 // --- 10. Internal error sanitization ---------------------------------------------------
@@ -423,4 +594,357 @@ test("10. an unexpected internal error is never leaked to the storefront respons
     assert.equal(JSON.stringify(result.body).includes("Prisma"), false);
     assert.equal("stack" in result.body.error, false);
   }
+});
+
+// --- Task 5B.3A: authoritative v2 quote issuance ------------------------------------
+
+const V2_SECRET = "storefront-handler-v2-signing-secret";
+const V2_ADJ = "gid://shopify/ProductVariant/424242";
+const LNY01_VARIANT_ID = "51028263796988";
+
+/** A policy provider that returns a fixed `enforce` decision — stands in for the real
+ * `createDefaultCartPricingPolicyProvider` reading the app-owned metafields, which do
+ * not exist on the dev store yet. */
+const fixedProvider = (over: Partial<Record<string, unknown>> = {}) => ({
+  async resolve() {
+    return {
+      action: "enforce",
+      context: {
+        installBinding: "install-binding-5b3a",
+        adjustmentVariantGid: V2_ADJ,
+        policyRevision: 9,
+        profileRef: "prof_LNY01",
+        profileRevision: 21,
+        // Task 5B.3B.2 — the real LNY01 dev pricing profile is priced in USD; a quote is
+        // signed only when this equals it. Individual tests override to prove the gate.
+        shopCurrency: "USD",
+        ...over,
+      },
+    };
+  },
+});
+/** A `block` decision — a mandatory fail-closed condition. */
+const blockingProvider = { async resolve() { return { action: "block", reason: "shop_policy_missing" }; } };
+/** A `bypass` decision — enforcement explicitly, safely OFF. */
+const bypassProvider = { async resolve() { return { action: "bypass", reason: "shop_disabled" }; } };
+
+const V2_ENV = {
+  IMPRINTID_CART_ENVELOPE_VERSION: "2",
+  IMPRINTID_CART_SIGNING_SECRET: V2_SECRET,
+  IMPRINTID_ADJUSTMENT_VARIANT_ID: V2_ADJ,
+  NODE_ENV: "test",
+} as const;
+
+async function v2Result(body: Record<string, unknown>, provider: { resolve: () => Promise<unknown> }) {
+  return handleStorefrontPricingRequest(
+    prisma,
+    SHOP_DOMAIN,
+    { sku: "", shopifyProductId: LNY01_PRODUCT_ID, ...body },
+    { shopifyProductId: LNY01_PRODUCT_ID, shopifyVariantId: LNY01_VARIANT_ID },
+    { policyProvider: provider as never },
+  );
+}
+
+test("5B.3A: a valid authoritative calculation returns a COMPLETE v2 quote (all bound fields, verifying signature)", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result({ quantity: 100 }, fixedProvider());
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    const cp = result.body.data.cartPricing;
+    assert.ok(cp, "a v2 quote was issued");
+    assert.equal(cp!.version, 2);
+    assert.ok("config" in cp!, "carries the normalized config attribute");
+
+    const p = JSON.parse(cp!.payload) as Record<string, unknown>;
+    // install / product / variant / quantity / currency / adjustment / revisions / digest
+    assert.equal(p.v, 2);
+    assert.equal(p.installBinding, "install-binding-5b3a");
+    assert.equal(p.productGid, `gid://shopify/Product/${LNY01_PRODUCT_ID}`);
+    assert.equal(p.variantGid, `gid://shopify/ProductVariant/${LNY01_VARIANT_ID}`);
+    assert.equal(p.quantity, 100);
+    assert.equal(p.currency, "USD");
+    assert.equal(p.adjustmentVariantGid, V2_ADJ);
+    assert.equal(p.policyRevision, 9);
+    assert.equal(p.profileRef, "prof_LNY01");
+    assert.equal(p.profileRevision, 21);
+    assert.equal(typeof p.configDigest, "string");
+    assert.ok(String(p.configDigest).startsWith("sha256:"));
+    assert.equal(typeof p.quoteId, "string");
+    assert.equal(typeof p.issuedAtServer, "number");
+    // base / component / total cents come from the engine result, not the request
+    assert.equal(p.baseUnitPriceCents, result.body.data.base.netUnitPriceCents);
+    assert.equal(
+      (p.baseUnitPriceCents as number) * 100 + (p.perUnitSurchargeCents as number) * 100 + (p.flatSurchargeCents as number),
+      p.lineTotalCents,
+    );
+
+    // signature verifies with the same primitives the Function uses
+    const { canonicalizeCartPricingPayloadV2 } = await import("./cart-pricing-contract.ts");
+    const { signHex } = await import("./hmac-sha256.ts");
+    assert.equal(cp!.signature, signHex(V2_SECRET, canonicalizeCartPricingPayloadV2(p as never)));
+
+    // config attribute re-hashes to the signed digest
+    const { digestOfConfigJson } = await import("./config-normalization.ts");
+    const d = digestOfConfigJson(cp!.config);
+    assert.ok(d.ok && d.digest === p.configDigest);
+  });
+});
+
+test("5B.3A: browser-supplied monetary totals + adjustment variant in the body are IGNORED", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result(
+      {
+        quantity: 100,
+        // hostile extras — none of these may reach the payload
+        lineTotalCents: 1,
+        baseUnitPriceCents: 1,
+        totals: { netTotalCents: 1 },
+        adjustmentVariantGid: "gid://shopify/ProductVariant/1",
+        installBinding: "attacker",
+        profileRevision: 999,
+        policyRevision: 999,
+        configDigest: "sha256:deadbeef",
+      },
+      fixedProvider(),
+    );
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    const p = JSON.parse(result.body.data.cartPricing!.payload) as Record<string, unknown>;
+    assert.equal(p.adjustmentVariantGid, V2_ADJ, "adjustment variant is the server's, not the body's");
+    assert.equal(p.installBinding, "install-binding-5b3a");
+    assert.equal(p.profileRevision, 21);
+    assert.equal(p.policyRevision, 9);
+    assert.notEqual(p.lineTotalCents, 1);
+    assert.notEqual(p.baseUnitPriceCents, 1);
+    assert.notEqual(p.configDigest, "sha256:deadbeef");
+  });
+});
+
+test("5B.3A: env adjustment GID that disagrees with the shop policy → fail closed (no v2 quote)", async () => {
+  await withEnv({ ...V2_ENV, IMPRINTID_ADJUSTMENT_VARIANT_ID: "gid://shopify/ProductVariant/111" }, async () => {
+    const result = await v2Result({ quantity: 100 }, fixedProvider({ adjustmentVariantGid: V2_ADJ }));
+    assert.equal(result.body.ok, true);
+    if (result.body.ok) assert.equal(result.body.data.cartPricing, null);
+  });
+});
+
+test("5B.3A: env adjustment GID missing / not a variant GID → fail closed", async () => {
+  for (const bad of [undefined, "424242", "gid://shopify/Product/1", "  "]) {
+    await withEnv({ ...V2_ENV, IMPRINTID_ADJUSTMENT_VARIANT_ID: bad }, async () => {
+      const result = await v2Result({ quantity: 100 }, fixedProvider());
+      assert.equal(result.body.ok, true);
+      if (result.body.ok) assert.equal(result.body.data.cartPricing, null, String(bad));
+    });
+  }
+});
+
+test("5B.3A: signing secret missing / blank / whitespace-only / padded → calc still returned for display, cartPricing null", async () => {
+  for (const bad of [undefined, "", "   ", " has-leading-space", "trailing-space "]) {
+    await withEnv({ ...V2_ENV, IMPRINTID_CART_SIGNING_SECRET: bad }, async () => {
+      const result = await v2Result({ quantity: 100 }, fixedProvider());
+      assert.equal(result.body.ok, true);
+      if (result.body.ok) {
+        assert.equal(result.body.data.base.netUnitPriceCents, 137, "display pricing still present");
+        assert.equal(result.body.data.cartPricing, null, `secret=${JSON.stringify(bad)}`);
+      }
+    });
+  }
+});
+
+test("5B.3A: SHOPIFY_API_SECRET set alone is NOT used to sign a v2 quote (no OAuth-secret fallback)", async () => {
+  await withEnv(
+    { ...V2_ENV, IMPRINTID_CART_SIGNING_SECRET: undefined, SHOPIFY_API_SECRET: "the-oauth-app-secret" },
+    async () => {
+      const result = await v2Result({ quantity: 100 }, fixedProvider());
+      assert.equal(result.body.ok, true);
+      if (result.body.ok) assert.equal(result.body.data.cartPricing, null);
+    },
+  );
+});
+
+test("5B.3A: a `block` decision → no signed quote, never v1", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result({ quantity: 100 }, blockingProvider);
+    assert.equal(result.body.ok, true);
+    if (result.body.ok) assert.equal(result.body.data.cartPricing, null);
+  });
+});
+
+test("5B.3A: env '2' NEVER downgrades to v1 even in the non-production transition window", async () => {
+  await withEnv(
+    { ...V2_ENV, IMPRINTID_ALLOW_LEGACY_CART_PRICING_V1: "true" },
+    async () => {
+      const result = await v2Result({ quantity: 100 }, blockingProvider);
+      assert.equal(result.body.ok, true);
+      if (result.body.ok) assert.equal(result.body.data.cartPricing, null, "no v1 fallback");
+    },
+  );
+});
+
+// --- Task 5B.3A.1: the three-state enforcement decision on the response ---------------
+
+test("5B.3A.1: an `enforce` decision + a signed quote → enforcement.state 'enforce'", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result({ quantity: 100 }, fixedProvider());
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    assert.ok(result.body.data.cartPricing);
+    assert.deepEqual(result.body.data.enforcement, { state: "enforce" });
+  });
+});
+
+test("5B.3A.1: a `bypass` decision → NO signed quote, enforcement.state 'bypass' (release native containment)", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result({ quantity: 100 }, bypassProvider);
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    assert.equal(result.body.data.cartPricing, null, "no signed quote when enforcement is bypassed");
+    assert.deepEqual(result.body.data.enforcement, { state: "bypass" });
+    assert.equal(result.body.data.base.netUnitPriceCents, 137, "display pricing still computed");
+  });
+});
+
+test("5B.3A.1: a `block` decision → enforcement.state 'block'", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result({ quantity: 100 }, blockingProvider);
+    assert.equal(result.body.ok, true);
+    if (result.body.ok) assert.deepEqual(result.body.data.enforcement, { state: "block" });
+  });
+});
+
+test("5B.3A.1: an `enforce` decision on a deployment that CANNOT sign → downgraded to enforcement.state 'block'", async () => {
+  await withEnv({ ...V2_ENV, IMPRINTID_CART_SIGNING_SECRET: undefined }, async () => {
+    const result = await v2Result({ quantity: 100 }, fixedProvider());
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    assert.equal(result.body.data.cartPricing, null);
+    assert.deepEqual(result.body.data.enforcement, { state: "block" }, "an enforced product that can't be signed stays contained");
+  });
+});
+
+test("5B.3A.1: a `bypass` decision reports 'bypass' even when the deployment could not issue a v2 quote", async () => {
+  await withEnv({ ...V2_ENV, IMPRINTID_CART_SIGNING_SECRET: undefined }, async () => {
+    const result = await v2Result({ quantity: 100 }, bypassProvider);
+    assert.equal(result.body.ok, true);
+    if (result.body.ok) assert.deepEqual(result.body.data.enforcement, { state: "bypass" });
+  });
+});
+
+test("5B.3A.1: enforcement is 'block' by default — a legacy request with no identity", async () => {
+  const result = await handleStorefrontPricingRequest(prisma, SHOP_DOMAIN, { sku: SKU, quantity: 100 });
+  assert.equal(result.body.ok, true);
+  if (result.body.ok) assert.deepEqual(result.body.data.enforcement, { state: "block" });
+});
+
+test("5B.3A.1: the reason behind a bypass/block is NEVER exposed in the response", async () => {
+  await withEnv(V2_ENV, async () => {
+    for (const provider of [bypassProvider, blockingProvider]) {
+      const result = await v2Result({ quantity: 100 }, provider);
+      assert.equal(result.body.ok, true);
+      if (!result.body.ok) continue;
+      const serialized = JSON.stringify(result.body.data.enforcement);
+      assert.equal(/reason|shop_disabled|shop_policy_missing|maintenance/.test(serialized), false, serialized);
+      assert.deepEqual(Object.keys(result.body.data.enforcement), ["state"]);
+    }
+  });
+});
+
+test("5B.3A: the v2 response never contains the signing secret or an unsigned canonical message", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result({ quantity: 100 }, fixedProvider());
+    assert.equal(result.body.ok, true);
+    const serialized = JSON.stringify(result.body);
+    assert.equal(serialized.includes(V2_SECRET), false, "secret never in the response");
+    // the canonical (newline-joined key=value) string is never returned — only the JSON payload + hex signature
+    assert.equal(serialized.includes("installBinding=install-binding-5b3a\n"), false);
+  });
+});
+
+test("5B.3A: blank Shopify SKU + LNY01 product id prices via the active ProductPricingOverride and still issues a complete v2 quote", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result({ quantity: 100, sku: "" }, fixedProvider());
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    assert.equal(result.body.data.identity!.resolutionSource, "product_override");
+    const cp = result.body.data.cartPricing;
+    assert.ok(cp, "v2 quote issued for a blank-SKU / product-override variant");
+    const p = JSON.parse(cp!.payload) as Record<string, unknown>;
+    assert.equal(p.variantGid, `gid://shopify/ProductVariant/${LNY01_VARIANT_ID}`);
+    assert.equal(p.productGid, `gid://shopify/Product/${LNY01_PRODUCT_ID}`);
+  });
+});
+
+test("5B.3A: the default provider (no admin) fails closed — v2 attempted, cartPricing null, never v1", async () => {
+  await withEnv(V2_ENV, async () => {
+    // no `policyProvider` and no `admin` in options ⇒ createDefaultCartPricingPolicyProvider({ admin: null })
+    const result = await handleStorefrontPricingRequest(
+      prisma,
+      SHOP_DOMAIN,
+      { sku: "", quantity: 100, shopifyProductId: LNY01_PRODUCT_ID },
+      { shopifyProductId: LNY01_PRODUCT_ID, shopifyVariantId: LNY01_VARIANT_ID },
+    );
+    assert.equal(result.body.ok, true);
+    if (result.body.ok) assert.equal(result.body.data.cartPricing, null);
+  });
+});
+
+// --- Task 5B.3B.2: currency safety at the signing boundary --------------------------
+
+test("5B.3B.2: USD pricing profile + USD authoritative shop currency → a signed v2 quote is issued (currency USD)", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result({ quantity: 100 }, fixedProvider({ shopCurrency: "USD" }));
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    assert.ok(result.body.data.cartPricing, "quote issued when profile currency == shop currency");
+    const p = JSON.parse(result.body.data.cartPricing!.payload) as Record<string, unknown>;
+    assert.equal(p.currency, "USD");
+    assert.deepEqual(result.body.data.enforcement, { state: "enforce" });
+  });
+});
+
+test("5B.3B.2: USD pricing profile + BDT shop currency → NO signed quote (fails BEFORE signing), state block", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result({ quantity: 100 }, fixedProvider({ shopCurrency: "BDT" }));
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    assert.equal(result.body.data.cartPricing, null, "PROFILE_SHOP_CURRENCY_MISMATCH → no quote, no FX");
+    assert.equal(result.body.data.base.netUnitPriceCents, 137, "display pricing is still computed");
+    assert.deepEqual(result.body.data.enforcement, { state: "block" }, "an enforced product with a currency mismatch stays contained");
+  });
+});
+
+test("5B.3B.2: a missing / malformed authoritative shop currency → CURRENCY_CONTEXT_UNAVAILABLE, no quote", async () => {
+  await withEnv(V2_ENV, async () => {
+    for (const bad of [null, undefined, "US Dollars"]) {
+      const result = await v2Result({ quantity: 100 }, fixedProvider({ shopCurrency: bad }));
+      assert.equal(result.body.ok, true);
+      if (result.body.ok) assert.equal(result.body.data.cartPricing, null, JSON.stringify(bad));
+    }
+  });
+});
+
+test("5B.3B.2: the browser CANNOT supply or override the quote currency", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result(
+      { quantity: 100, currency: "EUR", cartCurrency: "EUR", presentmentCurrency: "JPY" },
+      fixedProvider({ shopCurrency: "USD" }),
+    );
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    assert.ok(result.body.data.cartPricing);
+    const p = JSON.parse(result.body.data.cartPricing!.payload) as Record<string, unknown>;
+    assert.equal(p.currency, "USD", "currency is the profile/shop currency, never the browser's");
+  });
+});
+
+test("5B.3B.2: no automatic FX — the quote currency is the profile currency verbatim, never converted", async () => {
+  await withEnv(V2_ENV, async () => {
+    const result = await v2Result({ quantity: 100 }, fixedProvider({ shopCurrency: "USD" }));
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    const p = JSON.parse(result.body.data.cartPricing!.payload) as Record<string, unknown>;
+    // base cents come straight from the engine (netUnitPriceCents) — no rate multiplier applied
+    assert.equal(p.baseUnitPriceCents, result.body.data.base.netUnitPriceCents);
+    assert.equal(p.currency, "USD");
+  });
 });

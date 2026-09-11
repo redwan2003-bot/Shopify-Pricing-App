@@ -1,0 +1,5 @@
+dist
+generated
+
+# Task 5B.3B — the baked signing secret NEVER enters version control.
+src/config.secret.generated.ts

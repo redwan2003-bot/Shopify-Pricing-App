@@ -24,7 +24,6 @@ export type VerifyFailureReason =
   | "unsupported_version"
   | "malformed_payload"
   | "invalid_signature"
-  | "expired"
   | "quantity_mismatch"
   | "variant_mismatch"
   | "invalid_price";
@@ -104,17 +103,19 @@ export interface CartPricingAttributes {
 }
 
 /**
- * The Function's entire trust boundary. Every one of these checks is a real rejection
- * path exercised by a corresponding test in `cart_transform_run.test.ts` — see that
- * file's test list for the full enumeration (missing attributes, invalid signature,
- * malformed payload, unsupported version, expired, quantity mismatch, variant
- * mismatch, invalid/negative price). Never throws — every failure is a normal `{ ok:
- * false }` return, so one bad line never prevents other lines in the same cart from
- * being processed (see cart_transform_run.ts).
+ * The v1 Function trust boundary. LEGACY / COMPATIBILITY ONLY (Task 5B.1): v1 is
+ * accepted while envelope-v2 prerequisites (the app-owned metafield revisions) are
+ * absent, and carries NO replay protection — the Function-side `expiresAt` /
+ * `Date.now()` check was removed (Shopify Functions are deterministic; a clock is not
+ * allowed). Replay/expiry protection lives only in envelope v2 (`verify-payload-v2.ts`),
+ * bound to `profileRevision` / `policyRevision`. `expiresAt` is still parsed for shape
+ * compatibility but never compared here.
+ *
+ * Never throws — every failure is a normal `{ ok: false }` return, so one bad line never
+ * prevents other lines in the same cart from being processed.
  */
 export function verifyCartPricingAttributes(
   secret: string,
-  now: number,
   cartLine: CartLineForVerification,
   attrs: CartPricingAttributes,
 ): VerifyResult {
@@ -134,10 +135,6 @@ export function verifyCartPricingAttributes(
   const expectedSignature = signHex(secret, canonicalize(payload));
   if (!timingSafeEqualHex(attrs.signature, expectedSignature)) {
     return { ok: false, reason: "invalid_signature" };
-  }
-
-  if (now > payload.expiresAt) {
-    return { ok: false, reason: "expired" };
   }
 
   if (payload.quantity !== cartLine.quantity) {

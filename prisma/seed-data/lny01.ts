@@ -109,14 +109,17 @@ export function buildLny01PricingInput(
       },
     ],
 
-    // Product colors (Phase 2.7): intentionally empty. No color pricing/availability
-    // data exists in the authoritative Phase 2.2 source sheet for LNY01, and the Sage
-    // reference page returned no retrievable product data (see
-    // docs/pricing-model-expansion.md, "Sage reference analysis") — so none was
-    // invented. The capability is fully implemented and tested (see
-    // app/lib/pricing/calculator.test.ts's "product color" suite) against synthetic
-    // fixtures instead.
-    productColors: [],
+    // Product colors (Phase 2.7): the three stock colors that exist as real Shopify
+    // "Color" variants on the LNY01 product (Black, Red, Blue), included at no upcharge.
+    // The product's wider "24 stock colors" range has no per-colour price sheet, so only
+    // the three modelled as actual variants are listed here; add more once a source
+    // sheet exists. `priceAdjustmentCents: 0` (not null) so each reads as "Included",
+    // never "price unavailable".
+    productColors: [
+      { code: "BLACK", name: "Black", priceAdjustmentCents: 0 },
+      { code: "RED", name: "Red", priceAdjustmentCents: 0 },
+      { code: "BLUE", name: "Blue", priceAdjustmentCents: 0 },
+    ],
 
     // Attachment styles, split into one OptionGroup per pricing category. The source
     // gives a surcharge per *category*, not per individual attachment, for every

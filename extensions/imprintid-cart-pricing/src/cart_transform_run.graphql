@@ -1,12 +1,34 @@
 query CartTransformRunInput {
   presentmentCurrencyRate
+  shop {
+    enforcementPolicy: metafield(namespace: "$app:imprintid", key: "enforcement_policy") {
+      jsonValue
+    }
+  }
   cart {
     lines {
       id
       quantity
+      cost {
+        amountPerQuantity {
+          amount
+          currencyCode
+        }
+        totalAmount {
+          amount
+          currencyCode
+        }
+      }
       merchandise {
+        __typename
         ... on ProductVariant {
           id
+          product {
+            id
+            pricingPolicy: metafield(namespace: "$app:imprintid", key: "pricing_policy") {
+              jsonValue
+            }
+          }
         }
       }
       version: attribute(key: "_imprintid_pricing_version") {
@@ -16,6 +38,9 @@ query CartTransformRunInput {
         value
       }
       signature: attribute(key: "_imprintid_pricing_signature") {
+        value
+      }
+      config: attribute(key: "_imprintid_pricing_config") {
         value
       }
     }

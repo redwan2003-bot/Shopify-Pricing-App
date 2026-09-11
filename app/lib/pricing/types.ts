@@ -134,6 +134,10 @@ export interface OptionValueData {
   label: string;
   priceCode: string | null;
   priceAdjustmentCents: number | null;
+  /** Net (actually-charged) price adjustment, when the source supplied one separately
+   * from `priceAdjustmentCents` (list). null means "not supplied", not "same as list"
+   * — the calculator falls back to `priceAdjustmentCents` for both totals in that case. */
+  netPriceAdjustmentCents: number | null;
 }
 
 export interface OptionGroupData {
@@ -261,13 +265,20 @@ export interface OptionSelectionResult {
    * price — see errors.ts#OptionPricingUnavailable for when neither is available. */
   source: "option" | "category";
   priceAdjustmentCents: number;
+  /** Resolved net price for this selection — equal to `priceAdjustmentCents` unless
+   * the source data supplied a distinct net price for this option (or its category
+   * has none, so the same value is used for both). See `OptionValueData`. */
+  netPriceAdjustmentCents: number;
 }
 
 export interface OptionsResult {
   selections: OptionSelectionResult[];
-  /** Options carry one price adjustment in the source data (no list/net split), so
-   * this single amount is added to both totals.listTotalCents and totals.netTotalCents. */
+  /** Sum of each selection's (list) `priceAdjustmentCents` — feeds `totals.listTotalCents`. */
   chargesCents: number;
+  /** Sum of each selection's `netPriceAdjustmentCents` — feeds `totals.netTotalCents`.
+   * Equal to `chargesCents` unless at least one selected option carries a distinct net
+   * price (see `OptionValueData.netPriceAdjustmentCents`). */
+  netChargesCents: number;
 }
 
 export interface ProductionResult {

@@ -1,61 +1,69 @@
 import type { CartTransformRunInput, CartTransformRunResult, Operation } from "../generated/api.ts";
 import { verifyCartPricingAttributes } from "./verify-payload.ts";
+import {
+  verifyCartPricingAttributesV2,
+  parseShopEnforcementPolicy,
+  parseProductPricingPolicy,
+  type ShopEnforcementPolicy,
+  type ProductPricingPolicy,
+} from "./verify-payload-v2.ts";
 import { CART_SIGNING_SECRET } from "./config.generated.ts";
 
 /**
- * imprintid-cart-pricing — Cart Transform Function.
+ * imprintid-cart-pricing — Cart Transform Function (Task 5B.1 / 5B.1.1 hardened).
  *
- * THIS FUNCTION NEVER CALCULATES A PRICE. The real ImprintID pricing engine
- * (`app/lib/pricing/calculatePrice` — quantity tiers, decoration/color charges,
- * options, production, packaging) runs entirely server-side, where it has the
- * database access it needs; that access is categorically unavailable here — Shopify
- * Functions execute in a sandboxed WASM runtime with no network, filesystem, or
- * database access, and (relevant to `config.generated.ts`) no runtime environment
- * variables either. This function's only job is: verify a signature the server
- * already produced, and if (and only if) it's genuinely valid for this exact cart
- * line, tell Shopify to price the line at the number the server already calculated.
- * See app/lib/pricing-api/cart-signature.ts for where that payload is built, and
- * docs/storefront-pricing-bridge.md for the end-to-end contract.
+ * THIS FUNCTION NEVER CALCULATES A PRICE. It verifies a signature the server already
+ * produced and — if (and only if) it is genuinely valid for this exact cart line against
+ * **Shopify-owned** policy data — expands the line at the numbers the server calculated.
  *
- * WHY `lineExpand`, NOT `lineUpdate`: `lineUpdate` only accepts a single per-unit
- * price — no way to represent a line total that mixes true per-unit charges with flat
- * one-time charges (setup fees, production/packaging fees) without rounding drift.
- * `lineExpand` lets each component of `PricingCalculationResult` carry its own *exact*
- * price (per-unit or flat, whichever it actually is) as a separate expanded item — see
- * cart-signature.ts's doc comment for the exact decomposition and the algebraic proof
- * it reconstructs the original total with zero rounding error.
+ * 5B.3B.2 CHANGES:
+ *  - **Currency is mandatory and never converted.** An enforced v2 line is expanded only
+ *    when Shopify's own cart-line currency equals the signed quote currency AND the
+ *    presentment rate is par (1:1). A missing cart currency or any mismatch yields NO
+ *    operation (the Validation Function then blocks the line). NO foreign-exchange math
+ *    is ever applied to a v2 quote.
  *
- * STORE PLAN REQUIREMENT (corrected from an earlier read of only the GraphQL schema's inline
- * doc-comments, which mention Shopify Plus only for `lineUpdate`): Shopify's apps
- * documentation states plainly that "only development stores or stores on a Shopify
- * Plus plan can use apps with `lineExpand` operations" — so `lineExpand` is NOT
- * Plus-independent the way the schema's own inline comments alone suggested. The dev
- * store this was built/tested against qualifies as a development store regardless: a
- * production merchant using this Function would need Shopify Plus (or their own
- * development store) for it to actually apply.
+ * 5B.1.1 CHANGES:
+ *  - **No implicit legacy mode.** A missing / malformed / incomplete / unsupported shop
+ *    `enforcement_policy` metafield now yields **NO operation** — it is NEVER treated as
+ *    "backward compatibility". Legacy v1 is authorized ONLY by an explicit
+ *    `allowLegacyV1: true` on a valid `pilot`-mode shop policy.
+ *  - Input is typed by the **generated** `CartTransformRunInput`
+ *    (`shopify app function typegen` over `cart_transform_run.graphql`). It is validated
+ *    into a small internal `NormalizedTransformInput` before any logic runs — no `any`,
+ *    no invented interface for the whole input.
  *
- * ALSO NOT SUPPORTED: `lineExpand` is rejected outright whenever a selling plan is
- * present on the line, and is not supported for subscription/recurring-purchase
- * orders — per Shopify's Cart Transform documentation. ImprintID's current pricing
- * model has no selling-plan/subscription concept anywhere (`app/lib/pricing/**` has no
- * such field), so this doesn't affect anything built so far — but it's a real
- * constraint the moment ImprintID products are ever sold via a selling plan.
+ * 5B.1 CHANGES (retained):
+ *  - NO CLOCK anywhere. `Date.now()` / injected `now` / `expiresAt` comparisons removed.
+ *  - Envelope v2 bound to the app-owned shop + product policy metafields; replay/expiry
+ *    is revision-bound (`profileRevision` / `policyRevision`), not clock-bound.
+ *  - Policy modes: `disabled` / `pilot` / `universal` / `maintenance`.
  *
- * The `ExpandedItem.merchandiseId` tradeoff: it must reference a real product variant,
- * so this function relies on one dedicated, merchant-configured "adjustment" variant
- * (its GID is itself part of the signed
- * payload, chosen server-side — see IMPRINTID_ADJUSTMENT_VARIANT_ID) to represent
- * every surcharge component; the base component uses the real variant already in the
- * cart line.
+ * IMPORTANT LIMITATION: a Cart Transform CANNOT return a customer-blocking error. An
+ * invalid/missing/absent-policy quote produces NO pricing operation → the line keeps its
+ * **native price** until the Cart & Checkout Validation Function (Task 5B.2) is
+ * generated, implemented, and activated. Because of this residual native-price exposure,
+ * cart signing and enforced rollout must remain disabled until Validation is live.
  */
 
 const NO_CHANGES: CartTransformRunResult = { operations: [] };
 
-/** Exact integer-cents → `Decimal` string, with no floating-point division of the
- * cents value itself — no precision loss converting, say, 6 cents to "0.06" or 123456
- * cents to "1234.56". This is the correct conversion whenever presentment currency
- * equals shop currency (rate 1) — the common case, and the only case any of this
- * extension's "exact reconstruction" tests assume. */
+/** Task 5B.3B.2 — an enforced v2 line is only ever expanded at PAR. No foreign-exchange
+ * conversion is ever performed on a signed quote (see the v2 branch of `runCartTransform`
+ * and `verifyCartPricingAttributesV2`'s mandatory currency check). */
+const PAR_RATE = "1";
+
+/** Whether Shopify's `presentmentCurrencyRate` describes a par (1:1) conversion. A
+ * malformed rate is NOT par → fail closed. */
+export function isParPresentmentRate(rate: string): boolean {
+  const n = Number(rate);
+  return Number.isFinite(n) && n === 1;
+}
+
+// ---------------------------------------------------------------------------
+// Money formatting (unchanged)
+// ---------------------------------------------------------------------------
+
 function formatExactCents(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   const abs = Math.abs(cents);
@@ -64,113 +72,262 @@ function formatExactCents(cents: number): string {
   return `${sign}${dollars}.${String(remainderCents).padStart(2, "0")}`;
 }
 
-/**
- * Converts integer shop-currency cents to the `Decimal` (string) format Cart
- * Transform's price fields require — which the schema documents as being in
- * *presentment* currency, not shop currency (`ExpandedItemFixedPricePerUnitAdjustment.
- * amount`: "in presentment currency"). `calculatePrice` (the pricing engine) has no
- * multi-currency concept anywhere — every cent value in `PricingCalculationResult` is
- * a shop-currency amount — so this conversion has to happen here, at the integration
- * boundary, using `input.presentmentCurrencyRate` (a real field Shopify's Function
- * input provides for exactly this purpose — see cart_transform_run.graphql).
- *
- * When `presentmentRate` is exactly `"1"` (single-currency shops, or a customer
- * viewing in the shop's own currency — the common case), this takes the exact integer
- * path with zero floating-point involvement. Only when the rate genuinely differs does
- * it fall back to the same `parseFloat(amount) * rate` pattern Shopify's own
- * documentation uses for this conversion — at that point some floating-point rounding
- * is inherent to *any* currency conversion, not something this function introduces.
- */
 export function centsToDecimalString(cents: number, presentmentRate: string = "1"): string {
-  if (presentmentRate === "1" || presentmentRate === "1.0") {
-    return formatExactCents(cents);
-  }
+  if (presentmentRate === "1" || presentmentRate === "1.0") return formatExactCents(cents);
   const rate = Number(presentmentRate);
-  if (!Number.isFinite(rate) || rate <= 0) {
-    // A malformed/missing rate must never silently become a 1:1 conversion for a
-    // genuinely different currency — but it also must never crash the whole cart's
-    // transform. Falling back to the exact shop-currency amount is the same
-    // fail-safe-not-fail-open posture as everywhere else in this function: the price
-    // is never wrong in the "too cheap" direction due to a malformed rate, only
-    // potentially in the shop's own currency terms, which is what was actually signed.
-    return formatExactCents(cents);
-  }
+  if (!Number.isFinite(rate) || rate <= 0) return formatExactCents(cents);
   return ((cents / 100) * rate).toFixed(2);
 }
 
-export function cartTransformRun(input: CartTransformRunInput): CartTransformRunResult {
-  return runCartTransform(input, CART_SIGNING_SECRET, Math.floor(Date.now() / 1000));
+// ---------------------------------------------------------------------------
+// Validated normalization of the generated Function input
+// ---------------------------------------------------------------------------
+
+/** The signed-quote line attributes, as strings-or-null. */
+export interface LineAttrs {
+  version: string | null;
+  payload: string | null;
+  signature: string | null;
+  config: string | null;
 }
 
-/** The actual logic, with the compiled-in secret and current time as explicit
- * parameters instead of read directly from `config.generated.ts`/`Date.now()` — this
- * is what `cart_transform_run.test.ts` calls directly, with a known test secret and a
- * fixed `now`, so tests are deterministic and don't depend on when they happen to run
- * or on the (deliberately non-functional) placeholder secret in the checked-in
- * `config.generated.ts`. */
-export function runCartTransform(input: CartTransformRunInput, secret: string, now: number): CartTransformRunResult {
+/** A cart line after validated extraction from `CartTransformRunInput`. Small, internal,
+ * and only produced by `normalizeTransformInput` — never a cast of the raw input. */
+export interface NormalizedLine {
+  id: string;
+  quantity: number;
+  merchandiseId: string | null;
+  productGid: string | null;
+  productPolicyJson: unknown;
+  currencyCode: string | null;
+  attrs: LineAttrs;
+}
+
+export interface NormalizedTransformInput {
+  presentmentRate: string;
+  /** Raw `jsonValue` of the shop `$app:imprintid/enforcement_policy` metafield (parsed
+   * strictly downstream). `null` when absent. */
+  shopPolicyJson: unknown;
+  lines: NormalizedLine[];
+}
+
+function attrValue(a: { value?: string | null } | null | undefined): string | null {
+  return a && typeof a.value === "string" ? a.value : null;
+}
+
+export function normalizeTransformInput(input: CartTransformRunInput): NormalizedTransformInput {
+  const lines: NormalizedLine[] = input.cart.lines.map((line) => {
+    const merch = line.merchandise;
+    // Task 5B.3B.8 — ProductVariant identity is taken ONLY from the GraphQL `__typename`
+    // discriminant, never inferred from the presence of `id` / `product` / a SKU. The
+    // input query (`cart_transform_run.graphql`) MUST request `merchandise { __typename }`
+    // for this to be meaningful; a missing/unknown discriminator yields a non-variant
+    // line (all identity fields `null`) and the enforced path is never reached — fail
+    // closed. (A prior build omitted `__typename` from the query, which disabled all
+    // enforcement; see `cart-transform-typename-5b3b8.test.ts`.)
+    const isVariant = merch.__typename === "ProductVariant";
+    const merchandiseId = isVariant ? merch.id : null;
+    const productGid = isVariant ? merch.product.id : null;
+    const productPolicyJson = isVariant ? (merch.product.pricingPolicy?.jsonValue ?? null) : null;
+    const currencyCode =
+      line.cost.amountPerQuantity.currencyCode ?? line.cost.totalAmount.currencyCode ?? null;
+    return {
+      id: line.id,
+      quantity: line.quantity,
+      merchandiseId,
+      productGid,
+      productPolicyJson,
+      currencyCode: currencyCode === null || currencyCode === undefined ? null : String(currencyCode),
+      attrs: {
+        version: attrValue(line.version),
+        payload: attrValue(line.payload),
+        signature: attrValue(line.signature),
+        config: attrValue(line.config),
+      },
+    };
+  });
+
+  return {
+    presentmentRate: input.presentmentCurrencyRate,
+    shopPolicyJson: input.shop.enforcementPolicy?.jsonValue ?? null,
+    lines,
+  };
+}
+
+export function cartTransformRun(input: CartTransformRunInput): CartTransformRunResult {
+  return runCartTransform(normalizeTransformInput(input), CART_SIGNING_SECRET);
+}
+
+// ---------------------------------------------------------------------------
+// Expansion
+// ---------------------------------------------------------------------------
+
+interface ExpandedCartItem {
+  merchandiseId: string;
+  quantity: number;
+  price: { adjustment: { fixedPricePerUnit: { amount: string } } };
+}
+
+function priceAdjustment(amount: string): ExpandedCartItem["price"] {
+  return { adjustment: { fixedPricePerUnit: { amount } } };
+}
+
+function buildExpandedItems(
+  payload: {
+    baseVariantId: string;
+    quantity: number;
+    baseUnitPriceCents: number;
+    perUnitSurchargeCents: number;
+    flatSurchargeCents: number;
+    adjustmentVariantId: string;
+  },
+  presentmentRate: string,
+): ExpandedCartItem[] {
+  const items: ExpandedCartItem[] = [
+    {
+      merchandiseId: payload.baseVariantId,
+      quantity: payload.quantity,
+      price: priceAdjustment(centsToDecimalString(payload.baseUnitPriceCents, presentmentRate)),
+    },
+  ];
+  if (payload.perUnitSurchargeCents > 0) {
+    items.push({
+      merchandiseId: payload.adjustmentVariantId,
+      quantity: payload.quantity,
+      price: priceAdjustment(centsToDecimalString(payload.perUnitSurchargeCents, presentmentRate)),
+    });
+  }
+  if (payload.flatSurchargeCents > 0) {
+    items.push({
+      merchandiseId: payload.adjustmentVariantId,
+      quantity: 1,
+      price: priceAdjustment(centsToDecimalString(payload.flatSurchargeCents, presentmentRate)),
+    });
+  }
+  return items;
+}
+
+// ---------------------------------------------------------------------------
+// Enforcement decision
+// ---------------------------------------------------------------------------
+
+/** Whether a v2 line is subject to enforcement, given the mode + product policy. */
+function isV2Enforced(mode: ShopEnforcementPolicy["mode"], productPolicy: ProductPricingPolicy | null): boolean {
+  switch (mode) {
+    case "disabled":
+      return false;
+    case "pilot":
+      return !!productPolicy && productPolicy.required && productPolicy.active;
+    case "universal":
+      return true;
+    case "maintenance":
+      return !!productPolicy && productPolicy.required;
+  }
+}
+
+/** Whether a legacy v1 quote may be processed for this line. v1 is authorized ONLY by an
+ * explicit `allowLegacyV1: true` on a `pilot`-mode policy, and ONLY for a line whose
+ * product is in the pilot (active `required` policy). Never in `universal` / `maintenance`
+ * / `disabled`, and never without a valid shop policy. */
+function isV1Allowed(policy: ShopEnforcementPolicy, productPolicy: ProductPricingPolicy | null): boolean {
+  if (policy.mode !== "pilot") return false;
+  if (policy.allowLegacyV1 !== true) return false;
+  return !!productPolicy && productPolicy.required && productPolicy.active;
+}
+
+export function runCartTransform(input: NormalizedTransformInput, secret: string): CartTransformRunResult {
   const operations: Operation[] = [];
-  const presentmentRate = input.presentmentCurrencyRate;
+  const { presentmentRate } = input;
 
-  for (const line of input.cart.lines) {
-    const merchandiseId = "id" in line.merchandise ? line.merchandise.id : null;
+  // 5B.1.1: a missing OR malformed shop policy fails CLOSED — NO operations. There is no
+  // implicit legacy mode. (`parseShopEnforcementPolicy` returns `null` for both cases.)
+  const policy = parseShopEnforcementPolicy(input.shopPolicyJson);
+  if (policy === null) return NO_CHANGES;
 
-    const verification = verifyCartPricingAttributes(
+  // Kill switch / intentionally-off / incident rollback ⇒ emit nothing.
+  if (!policy.enabled || policy.mode === "disabled" || policy.mode === "maintenance") {
+    return NO_CHANGES;
+  }
+
+  for (const line of input.lines) {
+    // Adjustment-variant protection: never expand a cart LINE that IS the adjustment
+    // variant (the Transform only ever introduces it as an expanded *component*).
+    if (line.merchandiseId && line.merchandiseId === policy.adjustmentVariantGid) continue;
+
+    const productPolicy = parseProductPricingPolicy(line.productPolicyJson);
+
+    if (line.attrs.version === "2") {
+      if (!isV2Enforced(policy.mode, productPolicy)) continue;
+      // universal with a missing/inactive product policy: nothing authoritative to price
+      // against — no operation; classified for the Validation Function to block.
+      if (!productPolicy || !productPolicy.active) continue;
+
+      // Task 5B.3B.2 — NO FX. An enforced v2 line is expanded only at par. The server
+      // signs a quote only when the profile currency equals the shop currency, and
+      // `verifyCartPricingAttributesV2` below requires the cart line's own currency to
+      // equal the signed currency — so a non-par presentment rate cannot describe a
+      // line this quote legitimately applies to. Refuse rather than convert.
+      if (!isParPresentmentRate(presentmentRate)) continue;
+
+      const verification = verifyCartPricingAttributesV2(
+        secret,
+        {
+          quantity: line.quantity,
+          variantGid: line.merchandiseId,
+          productGid: line.productGid,
+          currencyCode: line.currencyCode,
+        },
+        line.attrs,
+        policy,
+        productPolicy,
+      );
+      if (!verification.ok) continue;
+
+      const p = verification.payload;
+      operations.push({
+        lineExpand: {
+          cartLineId: line.id,
+          expandedCartItems: buildExpandedItems(
+            {
+              baseVariantId: p.variantGid,
+              quantity: p.quantity,
+              baseUnitPriceCents: p.baseUnitPriceCents,
+              perUnitSurchargeCents: p.perUnitSurchargeCents,
+              flatSurchargeCents: p.flatSurchargeCents,
+              adjustmentVariantId: p.adjustmentVariantGid,
+            },
+            PAR_RATE,
+          ),
+        },
+      });
+      continue;
+    }
+
+    // ---- v1 (legacy) — only under an explicit pilot + allowLegacyV1 authorization ----
+    if (!isV1Allowed(policy, productPolicy)) continue;
+
+    const v1 = verifyCartPricingAttributes(
       secret,
-      now,
-      { quantity: line.quantity, merchandiseId },
-      {
-        version: line.version?.value ?? null,
-        payload: line.payload?.value ?? null,
-        signature: line.signature?.value ?? null,
-      },
+      { quantity: line.quantity, merchandiseId: line.merchandiseId },
+      { version: line.attrs.version, payload: line.attrs.payload, signature: line.attrs.signature },
     );
+    if (!v1.ok) continue;
 
-    // Not every cart line is an ImprintID-configured product — a normal line simply
-    // has none of these attributes, which fails verification the same way a tampered
-    // one would, and is handled identically here: leave it untouched. This is also the
-    // fail-safe path for every other rejection reason (invalid/expired/mismatched) —
-    // never transform, never guess, never charge based on unverified client data.
-    if (!verification.ok) continue;
-
-    const { payload } = verification;
-
-    const expandedCartItems: Array<{
-      merchandiseId: string;
-      quantity: number;
-      price: { adjustment: { fixedPricePerUnit: { amount: string } } };
-    }> = [
-      {
-        merchandiseId: payload.baseVariantId,
-        quantity: payload.quantity,
-        price: { adjustment: { fixedPricePerUnit: { amount: centsToDecimalString(payload.baseUnitPriceCents, presentmentRate) } } },
-      },
-    ];
-
-    if (payload.perUnitSurchargeCents > 0) {
-      expandedCartItems.push({
-        merchandiseId: payload.adjustmentVariantId,
-        quantity: payload.quantity,
-        price: {
-          adjustment: { fixedPricePerUnit: { amount: centsToDecimalString(payload.perUnitSurchargeCents, presentmentRate) } },
-        },
-      });
-    }
-
-    if (payload.flatSurchargeCents > 0) {
-      expandedCartItems.push({
-        merchandiseId: payload.adjustmentVariantId,
-        quantity: 1,
-        price: {
-          adjustment: { fixedPricePerUnit: { amount: centsToDecimalString(payload.flatSurchargeCents, presentmentRate) } },
-        },
-      });
-    }
-
+    const pl = v1.payload;
     operations.push({
       lineExpand: {
         cartLineId: line.id,
-        expandedCartItems,
+        expandedCartItems: buildExpandedItems(
+          {
+            baseVariantId: pl.baseVariantId,
+            quantity: pl.quantity,
+            baseUnitPriceCents: pl.baseUnitPriceCents,
+            perUnitSurchargeCents: pl.perUnitSurchargeCents,
+            flatSurchargeCents: pl.flatSurchargeCents,
+            adjustmentVariantId: pl.adjustmentVariantId,
+          },
+          presentmentRate,
+        ),
       },
     });
   }

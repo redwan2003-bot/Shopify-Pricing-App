@@ -34,10 +34,17 @@ import {
   slugify,
   classifyResolvedPriceCents,
   parseProductVariantGid,
+  parseProductGid,
   isPositiveDigitString,
   parseVariantMap,
   resolveVariantFromMap,
   readVariantMap,
+  parseShopifyNumericId,
+  checkResponseIdentity,
+  readSignedV2Quote,
+  isSignedV2QuoteExpired,
+  signedV2QuoteAttributes,
+  legacyV1QuoteAttributes,
 } from "./dynamic-pricing-utils.js";
 
 (function () {
@@ -93,6 +100,68 @@ import {
     return root.querySelector(selector);
   }
 
+  // Task 4A.5 — contexts within the owning section whose `input[name="id"]` / variant
+  // controls belong to a DIFFERENT purchasable unit (a quick-add tile, a product card
+  // in a recommendation row, a bundled/complementary product) and must never be
+  // mistaken for this block's own product form or variant picker.
+  var EXCLUDED_FORM_CONTEXT_SELECTOR =
+    "quick-add-modal,quick-add,quick-order-list,[data-quick-add]," +
+    "product-card,.product-card,.card-product,.card--product,[data-product-card]," +
+    "product-recommendations,.product-recommendations,recommended-products," +
+    ".complementary-products,.complementary-products__container";
+
+  function isExcludedFormContext(el) {
+    try {
+      return !!(el && typeof el.closest === "function" && el.closest(EXCLUDED_FORM_CONTEXT_SELECTOR));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Preference order when a section legitimately contains more than one candidate
+  // `input[name="id"]` for the SAME product (e.g. a main product form plus a sticky
+  // buy-buttons form): the canonical `<product-form>` wins, then an explicit
+  // add-to-cart form, then any other form.
+  function formInputRank(input) {
+    try {
+      if (input.closest("product-form")) return 0;
+      if (input.closest('form[data-type="add-to-cart-form"]')) return 1;
+    } catch (e) {
+      /* invalid selector engine — fall through */
+    }
+    return 2;
+  }
+
+  // Task 4A.5.1 — native purchase controls in the owning section that this block must
+  // contain (disable + block) so a customer can never add the product with an UNSIGNED
+  // line while the ImprintID block governs its pricing. Client containment is a UX
+  // guard only — the Cart & Checkout Validation Function is the real boundary against
+  // adversarial direct `/cart/add.js` calls.
+  var NATIVE_SUBMIT_SELECTOR =
+    'button[type="submit"],input[type="submit"],button[name="add"],input[name="add"],button:not([type])';
+  // Wrappers a theme uses for a sticky / floating "add to cart" bar. Anything matched
+  // here is still required to sit inside THIS block's section (the queries are
+  // section-scoped) and to not be an excluded context, so a sticky bar for another
+  // product — which lives in another section — is never touched.
+  var STICKY_WRAPPER_SELECTOR =
+    "sticky-buy-buttons,sticky-atc,sticky-cart,[data-sticky-buy-buttons],[data-sticky-atc]," +
+    ".sticky-buy-buttons,.sticky-atc,.sticky-add-to-cart,.product-sticky,.product-form--sticky";
+
+  // Minimal CSS identifier escaper for attribute-value selectors (Shopify form ids are
+  // already `[A-Za-z0-9_-]`-only, but never trust that blindly). Prefers the platform
+  // `CSS.escape` when present.
+  function cssEscapeIdent(value) {
+    var s = String(value == null ? "" : value);
+    try {
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(s);
+    } catch (e) {
+      /* fall through to the manual escaper */
+    }
+    return s.replace(/[^\w-]/g, function (ch) {
+      return "\\" + ch;
+    });
+  }
+
   function debounce(fn, ms) {
     var timer = null;
     return function () {
@@ -110,6 +179,12 @@ import {
     this.sku = root.dataset.sku || "";
     this.proxyPath = root.dataset.proxyPath || "/apps/imprintid-pricing/pricing";
     this.catalog = null;
+    // Task 4A.5 — the SKU `this.catalog` was successfully loaded for. A pricing POST is
+    // only ever sent while this equals the active `selectedVariantSku`; a variant
+    // adoption whose catalog refetch failed leaves the two out of sync, and
+    // `_recalculateImmediate` then fails closed instead of pricing against the wrong
+    // catalog.
+    this.catalogSku = null;
     this.requestSeq = 0;
     this.activeController = null;
     // The signed cart pricing payload for the *currently displayed* result only — see
@@ -131,12 +206,52 @@ import {
     // `addToCart`) — a mismatch means the customer changed their selection since the
     // last quote, and must be blocked rather than silently added under the old price.
     this.productGid = root.dataset.productGid || "";
+    // Task 4A: the canonical Shopify product id (bare decimal string, never a JS
+    // number — Shopify ids exceed 2^53). This is IMMUTABLE for the life of the block
+    // (a product page shows one product); every variant change re-requests against this
+    // same id with the newly selected variant id. `""` when absent/invalid.
+    this.shopifyProductId = parseShopifyNumericId(root.dataset.shopifyProductId) || "";
+    // Task 4A.5.2 — ENFORCEMENT INTENT, decoupled from variant-metadata validity.
+    // Malformed/missing/empty variant metadata must fail dynamic PRICING closed while
+    // still CONTAINING the native Shopify cart (otherwise a broken `data-variant-map`
+    // silently re-opens an unsigned add-to-cart path). No product-policy metafield is
+    // surfaced to Liquid yet, so intent is inferred from: the ImprintID pricing block
+    // is present AND a valid Shopify product id was emitted. When the authoritative
+    // `$app:imprintid/pricing_policy` signal is provisioned, resolve intent from that
+    // instead (and un-enforced products simply must not render this block — see the
+    // block Liquid). "not enforced" is NEVER inferred from broken metadata.
+    this.pricingEnforcementIntended = this.shopifyProductId.length > 0;
+    // Task 5B.3A.1 — the AUTHORITATIVE three-state enforcement decision, learned from
+    // the server (catalog GET + pricing POST both carry `data.enforcement.state`).
+    // Starts `"block"` — fail closed, native cart contained — and is only ever moved to
+    // `"bypass"` (release native containment) by an explicit, server-observed policy
+    // state, or to `"enforce"` alongside a signed quote. An unknown/missing value stays
+    // `"block"`.
+    this._enforcementState = "block";
+    // Task 5B.3B — policy-bootstrap probe state: `_policyProbeInFlight` dedupes to one
+    // active request per block (product/section); `_policyProbeSeq` is the ownership
+    // token — a probe response whose token no longer matches (block destroyed / torn
+    // down and rebuilt) can never release a different product/section.
+    this._policyProbeInFlight = false;
+    this._policyProbeSeq = 0;
     this.variantMap = parseVariantMap(root.dataset.variantMap);
     this.selectedVariantId = root.dataset.variantId || "";
-    this.selectedVariantSku = root.dataset.variantSku || this.sku;
+    // SKU identity is separate from variant identity (Task 4A). It may be a real value
+    // or "" (a Shopify variant with no SKU); a blank SKU never authorizes pricing on
+    // its own — the server requires an active ProductPricingOverride for it.
+    this.selectedVariantSku = root.dataset.variantSku != null ? root.dataset.variantSku : this.sku;
     this.selectedVariantAvailable = root.dataset.variantAvailable !== "false";
+    this.quotedProductId = null;
     this.quotedVariantId = null;
     this.quotedVariantSku = null;
+    // Task 5B.3A — the quantity the currently-held signed quote was issued for. Add to
+    // Cart fails closed if the live quantity has moved on since.
+    this.quotedQuantity = null;
+    // Task 5B.3A — ownership generation for CONFIGURATION + QUANTITY. Bumped
+    // synchronously the instant any config/quantity control changes (before the
+    // debounced recalculation even runs), so the previous signed quote is invalidated at
+    // once and a response captured against an older generation is discarded on arrival.
+    this.configSeq = 0;
     // Incremented on every variant-selection change this block learns about (from
     // either mechanism above). Captured alongside each pricing request so a response
     // that resolves after a *newer* variant selection has already superseded it can be
@@ -162,6 +277,25 @@ import {
     // component uses internally for the same reason.
     this.lifecycleController = new AbortController();
     this.destroyed = false;
+
+    // --- Task 4A.5.1 — native cart containment + section-replacement lifecycle ---
+    // `_sectionId` is the immutable id of this block's owning Shopify section.
+    this._sectionId = this.root.dataset.sectionId || "";
+    // Sub-controller for the section-scoped listeners that must be re-bound when Horizon
+    // swaps the owning `<product-form>` / `<variant-picker>` / native buttons in place
+    // (the master `lifecycleController` covers listeners bound exactly once).
+    this._sectionBindingController = null;
+    // The exact form / picker nodes the rebindable listeners are currently attached to —
+    // an identity change (node replacement) is what triggers a re-bind.
+    this._boundOwnerForm = null;
+    this._boundOwnerPicker = null;
+    this._sectionScopeMasterBound = false;
+    // Stable listener references so re-applying containment never stacks duplicates
+    // (`addEventListener` de-dupes by type+listener+capture).
+    this._nativeControlClickGuard = this.handleContainedControlClick.bind(this);
+    this._nativeFormSubmitGuard = this.handleContainedFormSubmit.bind(this);
+    this.horizonVariantObserver = null;
+    this.sectionReplacementObserver = null;
 
     // --- Variant-synchronization readiness (Task 2B.2) --------------------------
     //
@@ -190,6 +324,16 @@ import {
         this.initialVariantEntry = mapInfo.entries[vi];
         break;
       }
+    }
+    // Task 4A.1 §4: the trusted variant map is authoritative for the initial
+    // selection's SKU and availability — derive the ACTIVE `selected*` state from it
+    // (not from the `data-variant-sku` / `data-variant-available` attributes, which can
+    // disagree). Every later variant change updates these from the adopted map entry
+    // too (see `resolveAndAdoptVariant`), so `canUseDynamicPricing()` and Add-to-Cart
+    // always evaluate the CURRENTLY selected variant, never the initial one.
+    if (this.initialVariantEntry) {
+      this.selectedVariantSku = this.initialVariantEntry.sku;
+      this.selectedVariantAvailable = this.initialVariantEntry.available;
     }
     // A product with more than one validated variant MUST keep the selected variant in
     // sync (via `shopify:product:select`) — a single, matching, available variant does
@@ -236,8 +380,22 @@ import {
     };
 
     this.recalculate = debounce(this.recalculate.bind(this), DEBOUNCE_MS);
+    // Task 5B.3A — current wall-clock (seconds). A method, not a captured value, and
+    // overridable in tests, so quote-expiry checks are deterministic.
+    this._now = function () {
+      return Math.floor(Date.now() / 1000);
+    };
+    // Task 5B.3A — the synchronous handler every config/quantity control fires: bump the
+    // ownership generation, drop the now-stale signed quote AT ONCE, then let the
+    // debounced recalculation request a fresh one.
+    this.onConfigInput = function () {
+      this.configSeq++;
+      this.invalidateSignedQuote();
+      this.recalculate();
+    }.bind(this);
     this.init();
     this.bindVariantSelectListener();
+    this.bindSectionScope();
   }
 
   /**
@@ -269,15 +427,61 @@ import {
    * Task 2B.2 requirement 3).
    */
   PricingBlock.prototype.canUseDynamicPricing = function () {
+    // --- structural readiness (fixed at construction) ---
     // `variantMetadataValid` is true only when a `data-variant-map` was present AND
     // parsed AND every key/entry is well-formed — Task 2B.3 folds "missing/blank" into
     // this (it is no longer a legacy bypass), so `valid` here implies `present`.
     if (!this.variantMetadataValid) return false;
     if (this.validatedVariantCount === 0) return false; // present, but `{}` — nothing to sell
     if (!this.initialVariantEntry) return false; // the initial Liquid variant isn't in the map
-    if (!this.initialVariantEntry.available) return false; // ...or it is, but marked unavailable
     if (this.variantSynchronizationRequired && !this.variantSynchronizationReady) return false;
+
+    // --- CURRENT-selection validity (Task 4A.1 §4: active state, not initial) ---
+    if (!this.selectedVariantAvailable) return false; // the currently selected variant is unavailable
+    // A BLANK currently-selected SKU is only usable with a valid Shopify product id —
+    // the server then resolves pricing via an active ProductPricingOverride for (shop,
+    // product id). This is evaluated on the ACTIVE selection: a product with no product
+    // id fails closed the moment the customer picks a blank-SKU variant, even if the
+    // initially rendered variant had a non-blank SKU.
+    if (!this.selectedVariantSku && !this.shopifyProductId) return false;
     return true;
+  };
+
+  /**
+   * Task 4A.1 §3 — the currently displayed quote (or a just-arrived response) failed
+   * canonical-identity validation. Fail closed: drop the signed payload and all quoted
+   * identity, keep Add to Cart disabled, show a safe non-sensitive pricing error, and
+   * render nothing. Never submits `/cart/add.js`.
+   */
+  PricingBlock.prototype.renderIdentityFailure = function () {
+    this.invalidateSignedQuote();
+    this.hideLoading();
+    var msg = t(this.root, MESSAGES.configurationError);
+    this.els.error.textContent = msg;
+    this.els.error.hidden = false;
+    // If the config panel never became visible (identity failed on the catalog fetch),
+    // surface the message in the always-visible "unavailable" slot too.
+    if (this.els.panel.hidden) {
+      this.els.unavailable.textContent = msg;
+      this.els.unavailable.hidden = false;
+    }
+  };
+
+  /**
+   * Task 4A.1 §3 — whether `data.identity` on a successful product-context response is
+   * acceptable for the request it answers. Only enforced when this block actually sent
+   * a product-context request (`this.shopifyProductId` set — always true in production;
+   * a legacy SKU-only preview/test carries no product id and no identity is required).
+   */
+  PricingBlock.prototype.responseIdentityOk = function (identity, requestProductId, requestVariantId) {
+    if (!this.shopifyProductId) return true; // not a product-context request
+    return checkResponseIdentity(identity, {
+      requestProductId: requestProductId,
+      requestVariantId: requestVariantId,
+      currentProductId: this.shopifyProductId,
+      currentVariantId: this.selectedVariantId,
+      selectedVariantSkuBlank: !this.selectedVariantSku,
+    });
   };
 
   /**
@@ -303,9 +507,7 @@ import {
     this.requestSeq++;
     this.catalogFetchSeq++;
     if (this.activeController) this.activeController.abort();
-    this.setCartPricing(null);
-    this.quotedVariantId = null;
-    this.quotedVariantSku = null;
+    this.invalidateSignedQuote();
     this.hideLoading();
     this.els.panel.hidden = true;
     this.els.unavailable.textContent = t(this.root, MESSAGES.variantSyncError);
@@ -315,9 +517,18 @@ import {
   PricingBlock.prototype.init = function () {
     if (!this.canUseDynamicPricing()) {
       this.failClosedForSync();
+      // Task 5B.3B §Phase-1.2 — a block that fails closed on variant metadata can never
+      // reach the catalog/pricing path, so it learns the authoritative enforcement
+      // decision through a minimal policy-only lookup (product id + verified shop
+      // context only). Starts contained; released only by an explicit current-product
+      // `bypass`.
+      this.probeEnforcementState();
       return;
     }
-    if (!this.sku) {
+    // Task 4A: a product with no resolvable pricing identity at all — no SKU AND no
+    // Shopify product id — has nothing to price against. (A blank SKU alone is fine as
+    // long as a product id is present; `canUseDynamicPricing` already enforced that.)
+    if (!this.sku && !this.shopifyProductId) {
       this.showUnavailable();
       return;
     }
@@ -329,6 +540,49 @@ import {
     this.els.unavailable.hidden = false;
     this.els.loading.hidden = true;
     this.els.panel.hidden = true;
+  };
+
+  /**
+   * Task 5B.3B §Phase-1.2 — POLICY BOOTSTRAP. One authenticated (App Proxy) GET to
+   * `?policyOnly=1&shopifyProductId=<id>` whose ONLY job is to read
+   * `data.enforcement.state` when the normal catalog-load path is unavailable (a block
+   * that failed closed on variant metadata). It requires NO variant id / SKU / variant
+   * map / pricing configuration, requests no pricing, calculates nothing, and touches
+   * none of the request-sequence counters.
+   *
+   *   - the block starts (and stays) natively contained;
+   *   - an explicit `bypass` for THIS product → release native containment;
+   *   - `enforce` / `block` / a malformed response / a network error / an ownership
+   *     mismatch → stay contained (fail closed);
+   *   - a stale response (block torn down, or the ownership token moved on) can never
+   *     release a different product/section;
+   *   - deduplicated to one active request per block.
+   */
+  PricingBlock.prototype.probeEnforcementState = function () {
+    if (this.destroyed || !this.shopifyProductId || this._policyProbeInFlight) return;
+    this._policyProbeInFlight = true;
+    var self = this;
+    var seq = ++this._policyProbeSeq;
+    var probeProductId = this.shopifyProductId;
+    var url =
+      this.proxyPath +
+      (this.proxyPath.indexOf("?") === -1 ? "?" : "&") +
+      "policyOnly=1&shopifyProductId=" +
+      encodeURIComponent(this.shopifyProductId);
+    fetch(url, { headers: { Accept: "application/json" } })
+      .then(function (response) {
+        return response.json();
+      })
+      .then(function (body) {
+        self._policyProbeInFlight = false;
+        // Ownership: the exact same live block, same product, same probe generation.
+        if (self.destroyed || seq !== self._policyProbeSeq || probeProductId !== self.shopifyProductId) return;
+        if (!body || body.ok !== true || !body.data || !body.data.enforcement) return; // malformed → stay contained
+        self.updateEnforcementState(body.data.enforcement.state);
+      })
+      .catch(function () {
+        self._policyProbeInFlight = false; // network error → stay contained
+      });
   };
 
   PricingBlock.prototype.showLoading = function (isInitialLoad) {
@@ -363,7 +617,15 @@ import {
     }
     var self = this;
     var seq = ++this.catalogFetchSeq;
+    // Task 4A: always carry the canonical Shopify product id and the CURRENTLY selected
+    // variant id (never the initial one, once a variant has been chosen). `sku` is
+    // optional supporting metadata only.
     var url = this.proxyPath + "?sku=" + encodeURIComponent(this.sku);
+    if (this.shopifyProductId) url += "&shopifyProductId=" + encodeURIComponent(this.shopifyProductId);
+    if (this.selectedVariantId) url += "&shopifyVariantId=" + encodeURIComponent(this.selectedVariantId);
+    var requestProductId = this.shopifyProductId;
+    var requestVariantId = this.selectedVariantId;
+    var requestVariantSku = this.selectedVariantSku;
 
     fetch(url, { headers: { Accept: "application/json" } })
       .then(function (response) {
@@ -373,11 +635,25 @@ import {
       })
       .then(function (result) {
         if (seq !== self.catalogFetchSeq) return; // a newer catalog fetch has already superseded this one
+        // Task 5B.3A.1 — learn the authoritative enforcement state on load (releases
+        // native containment for an explicit `bypass`). Read even from an otherwise
+        // unusable response body, but only when it is a well-formed success.
+        if (result.body && result.body.ok === true && result.body.data) {
+          self.updateEnforcementState(result.body.data.enforcement && result.body.data.enforcement.state);
+        }
         if (!result.body || result.body.ok !== true) {
           self.showUnavailable();
           return;
         }
+        // Task 4A.1 §3: a product-context catalog response must carry a valid,
+        // matching `identity` too — otherwise fail closed rather than render controls
+        // for the wrong product/variant.
+        if (!self.responseIdentityOk(result.body.data && result.body.data.identity, requestProductId, requestVariantId)) {
+          self.renderIdentityFailure();
+          return;
+        }
         self.catalog = result.body.data;
+        self.catalogSku = requestVariantSku;
         self.renderCatalog();
         self.hideLoading();
         self.els.panel.hidden = false;
@@ -414,7 +690,7 @@ import {
         this.els.color.appendChild(option);
       }, this);
       this.els.colorWrap.hidden = false;
-      this.els.color.addEventListener("change", this.recalculate);
+      this.els.color.addEventListener("change", this.onConfigInput);
     } else {
       this.els.colorWrap.hidden = true;
     }
@@ -428,49 +704,76 @@ import {
     }
 
     // Options: one <select> per catalog option group, built entirely from the real
-    // catalog response — no group/value name is ever hardcoded here.
+    // catalog response — no group/value name is ever hardcoded here. Every ATTACHMENT-kind
+    // group is grouped into ONE clickable <details class="imprintid-pricing__attachments">
+    // box (each category still its own independent <select> inside — selection behaviour
+    // is unchanged); Feature/Generic groups render inline as before. `this.optionSelects`
+    // is keyed by group name regardless of where the <select> lives, so
+    // `buildRequestBody()` is untouched.
     this.els.optionsContainer.innerHTML = "";
     this.optionSelects = {};
-    catalog.optionGroups.forEach(
-      function (group) {
-        var wrap = document.createElement("div");
-        wrap.className = "imprintid-pricing__field";
 
-        var id = "imprintid-pricing-option-" + this.root.id + "-" + slugify(group.name);
-        var label = document.createElement("label");
-        label.setAttribute("for", id);
-        label.textContent = group.name + (group.isRequired ? " *" : "");
-        wrap.appendChild(label);
+    var buildOptionField = function (group) {
+      var wrap = document.createElement("div");
+      wrap.className = "imprintid-pricing__field";
 
-        var select = document.createElement("select");
-        select.id = id;
-        select.dataset.groupName = group.name;
-        select.required = !!group.isRequired;
+      var id = "imprintid-pricing-option-" + this.root.id + "-" + slugify(group.name);
+      var label = document.createElement("label");
+      label.setAttribute("for", id);
+      label.textContent = group.name + (group.isRequired ? " *" : "");
+      wrap.appendChild(label);
 
-        if (!group.isRequired) {
-          var noneOption = document.createElement("option");
-          noneOption.value = "";
-          noneOption.textContent = t(this.root, "dynamic_pricing.option_none", "None");
-          select.appendChild(noneOption);
-        }
+      var select = document.createElement("select");
+      select.id = id;
+      select.dataset.groupName = group.name;
+      select.required = !!group.isRequired;
 
-        group.values.forEach(function (value) {
-          var option = document.createElement("option");
-          option.value = value.id;
-          // value.resolvedPriceCents/priceSource are already resolved server-side (see
-          // app/lib/pricing/calculator.ts#resolveOptionValuePrice via
-          // app/lib/pricing-api/catalog.ts) — this only formats that already-decided
-          // number, it does not decide which of value/category price applies.
-          option.textContent = this.formatOptionLabel(value.label, classifyResolvedPriceCents(value.resolvedPriceCents));
-          select.appendChild(option);
-        }, this);
+      if (!group.isRequired) {
+        var noneOption = document.createElement("option");
+        noneOption.value = "";
+        noneOption.textContent = t(this.root, "dynamic_pricing.option_none", "None");
+        select.appendChild(noneOption);
+      }
 
-        select.addEventListener("change", this.recalculate);
-        wrap.appendChild(select);
-        this.els.optionsContainer.appendChild(wrap);
-        this.optionSelects[group.name] = select;
-      }.bind(this),
-    );
+      group.values.forEach(function (value) {
+        var option = document.createElement("option");
+        option.value = value.id;
+        // value.resolvedPriceCents/priceSource are already resolved server-side (see
+        // app/lib/pricing/calculator.ts#resolveOptionValuePrice via
+        // app/lib/pricing-api/catalog.ts) — this only formats that already-decided
+        // number, it does not decide which of value/category price applies.
+        option.textContent = this.formatOptionLabel(value.label, classifyResolvedPriceCents(value.resolvedPriceCents));
+        select.appendChild(option);
+      }, this);
+
+      select.addEventListener("change", this.onConfigInput);
+      wrap.appendChild(select);
+      this.optionSelects[group.name] = select;
+      return wrap;
+    }.bind(this);
+
+    var attachmentGroups = catalog.optionGroups.filter(function (group) {
+      return group.kind === "ATTACHMENT";
+    });
+    var otherGroups = catalog.optionGroups.filter(function (group) {
+      return group.kind !== "ATTACHMENT";
+    });
+
+    if (attachmentGroups.length > 0) {
+      var details = document.createElement("details");
+      details.className = "imprintid-pricing__attachments";
+      var summary = document.createElement("summary");
+      summary.textContent = t(this.root, "dynamic_pricing.attachments_legend", "Attachments");
+      details.appendChild(summary);
+      attachmentGroups.forEach(function (group) {
+        details.appendChild(buildOptionField(group));
+      });
+      this.els.optionsContainer.appendChild(details);
+    }
+
+    otherGroups.forEach(function (group) {
+      this.els.optionsContainer.appendChild(buildOptionField(group));
+    }, this);
 
     // Production: one <option> per catalog production rule — codes/labels/lead times
     // come from the API, never hardcoded.
@@ -492,19 +795,22 @@ import {
   };
 
   PricingBlock.prototype.bindEvents = function () {
-    this.els.quantity.addEventListener("input", this.recalculate);
-    this.els.colors.addEventListener("change", this.recalculate);
-    this.els.locations.addEventListener("change", this.recalculate);
-    this.els.repeatOrder.addEventListener("change", this.recalculate);
-    this.els.production.addEventListener("change", this.recalculate);
+    // Task 5B.3A — `onConfigInput` (not the bare debounced `recalculate`) so a quantity
+    // or configuration change synchronously invalidates the held signed quote before the
+    // debounce fires.
+    this.els.quantity.addEventListener("input", this.onConfigInput);
+    this.els.colors.addEventListener("change", this.onConfigInput);
+    this.els.locations.addEventListener("change", this.onConfigInput);
+    this.els.repeatOrder.addEventListener("change", this.onConfigInput);
+    this.els.production.addEventListener("change", this.onConfigInput);
     this.els.production.addEventListener("change", this.updateProductionHint.bind(this));
 
     this.els.reverseSide.addEventListener("change", function () {
       this.els.reverseArtworkWrap.hidden = !this.els.reverseSide.checked;
       if (!this.els.reverseSide.checked) this.els.reverseArtwork.checked = false;
-      this.recalculate();
+      this.onConfigInput();
     }.bind(this));
-    this.els.reverseArtwork.addEventListener("change", this.recalculate);
+    this.els.reverseArtwork.addEventListener("change", this.onConfigInput);
 
     if (this.els.addToCart) {
       this.els.addToCart.addEventListener("click", this.addToCart.bind(this));
@@ -557,11 +863,13 @@ import {
     var quantity = this.readQuantity();
     var body = { sku: this.sku, quantity: quantity.value };
 
-    // Only asks the server for a signed cart pricing payload when we actually know
-    // which real Shopify variant this configuration is for — see
-    // app/lib/pricing-api/storefront-handler.ts. Without a variant id (e.g. the block
-    // was placed on a page with no resolvable product/variant), pricing preview still
-    // works exactly as before; only Add to Cart stays unavailable.
+    // Task 4A: carry the canonical Shopify product id (immutable for this block) plus
+    // the CURRENTLY selected variant id — never the initial one once a variant has been
+    // chosen. `sku` above stays as optional supporting metadata; a blank-SKU variant is
+    // priced by the server via an active ProductPricingOverride for this product id.
+    if (this.shopifyProductId) {
+      body.shopifyProductId = this.shopifyProductId;
+    }
     if (this.selectedVariantId) {
       body.shopifyVariantId = this.selectedVariantId;
     }
@@ -645,6 +953,17 @@ import {
       return;
     }
 
+    // Task 4A.5 — the loaded catalog must belong to the ACTIVE variant's SKU. After a
+    // variant adoption whose catalog refetch failed (`showUnavailable` ran, `catalogSku`
+    // never advanced), a later recalculation must NOT price the new variant against the
+    // previous variant's still-loaded catalog — fail closed exactly as the failed fetch
+    // itself did.
+    if (this.catalog && this.catalogSku !== this.selectedVariantSku) {
+      this.invalidateSignedQuote();
+      this.showUnavailable();
+      return;
+    }
+
     var quantity = this.readQuantity();
     this.els.quantityError.hidden = true;
     this.els.quantity.setAttribute("aria-invalid", "false");
@@ -652,9 +971,7 @@ import {
     // Every recalculation invalidates whatever cart pricing payload was showing
     // before — a stale (even if still technically validly-signed) payload must never
     // be submitted for a configuration the customer has since changed away from.
-    this.setCartPricing(null);
-    this.quotedVariantId = null;
-    this.quotedVariantSku = null;
+    this.invalidateSignedQuote();
 
     if (!quantity.valid) {
       this.els.quantityError.textContent = t(this.root, MESSAGES.invalidQuantity);
@@ -666,10 +983,14 @@ import {
     var self = this;
     var seq = ++this.requestSeq;
     // Captured now, not re-derived from the DOM when the response arrives (Task 2B,
-    // requirement E) — this is what makes the eventual quote's ownership unambiguous.
+    // requirement E; Task 4A adds the product id; Task 5B.3A adds quantity + the config
+    // generation) — this is what makes the eventual quote's ownership unambiguous.
+    var requestProductId = this.shopifyProductId;
     var requestVariantId = this.selectedVariantId;
     var requestVariantSku = this.selectedVariantSku;
+    var requestQuantity = quantity.value;
     var requestSelectionSeq = this.variantSelectionSequence;
+    var requestConfigSeq = this.configSeq;
 
     if (this.activeController) this.activeController.abort();
     var controller = new AbortController();
@@ -696,9 +1017,27 @@ import {
         // the wrong thing (see class-level state doc comment above).
         if (seq !== self.requestSeq) return;
         if (requestSelectionSeq !== self.variantSelectionSequence) return;
+        // Task 5B.3A — a quantity / configuration change since this request was sent
+        // supersedes it exactly like a newer recalculation or variant selection: the
+        // signed quote it would carry no longer owns what's on screen.
+        if (requestConfigSeq !== self.configSeq) return;
         self.hideLoading();
         if (result.body && result.body.ok === true) {
-          self.renderResult(result.body.data, requestVariantId, requestVariantSku);
+          // Task 5B.3A.1 — apply the authoritative enforcement state from EVERY
+          // successful response, even one that then fails the identity check below.
+          if (result.body.data && result.body.data.enforcement) {
+            self.updateEnforcementState(result.body.data.enforcement.state);
+          }
+          // Task 4A.1 §3: a successful product-context response MUST carry a valid,
+          // matching `identity` (present, well-shaped, supported resolutionSource,
+          // equal to this request AND the current selection, `product_override` for a
+          // blank selected SKU). Anything else fails closed — clears the quote,
+          // disables Add to Cart, shows a safe error, renders nothing.
+          if (!self.responseIdentityOk(result.body.data && result.body.data.identity, requestProductId, requestVariantId)) {
+            self.renderIdentityFailure();
+            return;
+          }
+          self.renderResult(result.body.data, requestProductId, requestVariantId, requestVariantSku, requestQuantity);
         } else {
           self.renderError(result.body && result.body.error);
         }
@@ -746,7 +1085,37 @@ import {
       : t(this.root, MESSAGES.addToCartUnavailable);
   };
 
-  PricingBlock.prototype.renderResult = function (data, requestVariantId, requestVariantSku) {
+  /** Task 5B.3A — drop the held signed quote and ALL its ownership immediately (product,
+   * variant, SKU, quantity). Called synchronously the instant the customer changes a
+   * variant, quantity, or configuration control, and on every aborted/failed request —
+   * so a stale quote can never be submitted between the change and the next fresh quote
+   * landing. */
+  PricingBlock.prototype.invalidateSignedQuote = function () {
+    this.setCartPricing(null);
+    this.quotedProductId = null;
+    this.quotedVariantId = null;
+    this.quotedVariantSku = null;
+    this.quotedQuantity = null;
+  };
+
+  /**
+   * Task 5B.3A — is `cartPricing` a COMPLETE v2 signed quote that OWNS the given
+   * request's product / variant / quantity and has not expired? Returns `true` only
+   * when every expected v2 attribute + payload field is present and well-typed and the
+   * binding matches. A v1 envelope, an incomplete payload, a wrong-variant / wrong-
+   * quantity binding, or an elapsed lifetime all return `false` (fail closed).
+   */
+  PricingBlock.prototype.v2QuoteOwns = function (cartPricing, productId, variantId, quantity) {
+    var check = readSignedV2Quote(cartPricing);
+    if (!check.ok) return false;
+    if (parseProductVariantGid(check.payload.variantGid) !== variantId) return false;
+    if (parseProductGid(check.payload.productGid) !== productId) return false;
+    if (check.payload.quantity !== quantity) return false;
+    if (isSignedV2QuoteExpired(check.payload, this._now())) return false;
+    return true;
+  };
+
+  PricingBlock.prototype.renderResult = function (data, requestProductId, requestVariantId, requestVariantSku, requestQuantity) {
     // Task 2B.2 — never render a successful, addable quote for a block that can't
     // safely resolve the selected variant. (A gated `_recalculateImmediate` means this
     // is normally unreachable in that state; kept as the requirement-5 guard on the
@@ -756,23 +1125,50 @@ import {
       return;
     }
 
+    // Task 4A.1 §3 — final canonical-identity check before showing anything
+    // (belt-and-suspenders with `_recalculateImmediate`'s response handler): a
+    // product-context quote must carry a valid `identity` matching this request AND the
+    // current selection. Fail closed otherwise.
+    if (!this.responseIdentityOk(data.identity, requestProductId, requestVariantId)) {
+      this.renderIdentityFailure();
+      return;
+    }
+
     this.els.listUnit.textContent = formatMoney(data.base.listUnitPriceCents) + " / unit";
     this.els.netUnit.textContent = formatMoney(data.base.netUnitPriceCents) + " / unit";
     this.els.total.textContent = formatMoney(data.totals.netTotalCents);
-    this.setCartPricing(data.cartPricing);
 
-    // Quote ownership (Task 2B, requirement E): recorded ONLY from the values this
-    // specific request was actually sent with, never by re-reading `selectedVariantId`/
-    // `selectedVariantSku` now (those may have already moved on by the time this
-    // response arrives — the stale-response guard above only protects against a
-    // *newer* variant selection winning the race; a same-generation response should
-    // still record exactly what it was quoted for, not whatever the DOM says "currently").
-    if (data.cartPricing) {
+    // Task 5B.3A — the display prices above always render, but Add to Cart only becomes
+    // available on a CART-READY quote for THIS request:
+    //   - envelope v2 (production): a complete, unexpired v2 payload whose bound
+    //     product / variant / quantity match what was actually requested;
+    //   - envelope v1 (non-production transition only): a structurally complete v1
+    //     envelope (its payload carries no identity fields, so ownership is enforced by
+    //     the request-time `quoted*` capture + the Add to Cart cross-checks).
+    // Anything else → `cartPricing` stays null and Add to Cart stays disabled.
+    var quoteReady = false;
+    if (data.cartPricing && Number(data.cartPricing.version) === 2) {
+      quoteReady = this.v2QuoteOwns(data.cartPricing, requestProductId, requestVariantId, requestQuantity);
+    } else if (data.cartPricing) {
+      quoteReady = !!legacyV1QuoteAttributes(data.cartPricing);
+    }
+
+    this.setCartPricing(quoteReady ? data.cartPricing : null);
+
+    // Quote ownership (Task 2B, requirement E; Task 4A adds the product id; Task 5B.3A
+    // adds the quantity): recorded ONLY from the values this specific request was
+    // actually sent with, never by re-reading current state now (which may have moved
+    // on by the time this response arrives).
+    if (quoteReady) {
+      this.quotedProductId = requestProductId;
       this.quotedVariantId = requestVariantId;
       this.quotedVariantSku = requestVariantSku;
+      this.quotedQuantity = requestQuantity;
     } else {
+      this.quotedProductId = null;
       this.quotedVariantId = null;
       this.quotedVariantSku = null;
+      this.quotedQuantity = null;
     }
 
     this.els.tierNote.textContent = t(this.root, "dynamic_pricing.tier_note", "Pricing shown for {min}+ units.").replace(
@@ -861,11 +1257,28 @@ import {
   PricingBlock.prototype.resolveSectionContainer = function () {
     var sectionId = this.root.dataset.sectionId;
     if (!sectionId) return null;
-    return (
-      this.root.ownerDocument.querySelector('[data-section-id="' + sectionId + '"]') ||
-      this.root.ownerDocument.getElementById("shopify-section-" + sectionId) ||
-      null
-    );
+    var doc = this.root.ownerDocument;
+
+    // The real Shopify section wrapper is the authoritative unit — it is the element
+    // Shopify's Theme Editor and Horizon's own section rendering replace, and the one
+    // `shopify:section:load` / `:unload` fire against.
+    var wrapper = doc.getElementById("shopify-section-" + sectionId);
+    if (wrapper) return wrapper;
+
+    // Fallback for themes that mark the section with `data-section-id` instead: accept
+    // ONLY a real ancestor container of this block's root — NEVER the block's own root
+    // (the Liquid emits `data-section-id` on the root too, so a naive
+    // `querySelector('[data-section-id=…]')` would match the root itself and scope every
+    // "within the section" lookup to the block, finding no product form or picker).
+    var self = this;
+    var marked = doc.querySelectorAll('[data-section-id="' + sectionId + '"]');
+    var container = null;
+    for (var i = 0; i < marked.length; i++) {
+      var el = marked[i];
+      if (el === self.root || !el.contains(self.root)) continue;
+      if (!container || container.contains(el)) container = el; // keep the innermost real ancestor
+    }
+    return container;
   };
 
   /**
@@ -883,15 +1296,603 @@ import {
    * validated event/initial state alone, never falling back to an unrelated form.
    */
   PricingBlock.prototype.resolveFormVariantInput = function () {
-    var container = this.resolveSectionContainer();
-    if (!container) return null;
+    var resolved = this.resolveOwnedProductFormInput();
+    this.variantOwnershipAmbiguous = resolved.ambiguous;
+    return resolved.input;
+  };
 
-    return (
-      container.querySelector('product-form input[name="id"]') ||
-      container.querySelector('form[data-type="add-to-cart-form"] input[name="id"]') ||
-      container.querySelector('form input[name="id"]') ||
-      null
+  /**
+   * Task 4A.5 (strict ownership) — resolves the ONE authoritative `input[name="id"]`
+   * for this block's own product form, scoped entirely to `resolveSectionContainer()`:
+   *
+   *   - never an `input[name="id"]` that isn't actually inside a `<product-form>`/`<form>`;
+   *   - never one inside a quick-add tile, a recommendation/product card, or a
+   *     complementary-product block (`isExcludedFormContext`) — those belong to a
+   *     different purchasable unit;
+   *   - when the section legitimately holds several candidates for the SAME product
+   *     (main form + sticky buy-buttons), the canonical `<product-form>` is chosen
+   *     (`formInputRank`);
+   *   - when two rival top-rank candidates disagree on their current value (genuinely
+   *     ambiguous which product form the customer is on), returns
+   *     `{ input: null, ambiguous: true }` so callers fail closed via
+   *     `variant_sync_error` rather than guess.
+   *
+   * `{ input: null, ambiguous: false }` — no reliable field at all — is NOT a failure:
+   * callers continue on the validated event/initial state, exactly as before Task 4A.5.
+   */
+  PricingBlock.prototype.resolveOwnedProductFormInput = function () {
+    var container = this.resolveSectionContainer();
+    if (!container) return { input: null, ambiguous: false };
+
+    var all = container.querySelectorAll('input[name="id"]');
+    var candidates = [];
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (!el.closest || !el.closest("product-form, form")) continue;
+      if (isExcludedFormContext(el)) continue;
+      candidates.push(el);
+    }
+    if (candidates.length === 0) return { input: null, ambiguous: false };
+
+    candidates.sort(function (a, b) {
+      return formInputRank(a) - formInputRank(b);
+    });
+    var best = candidates[0];
+    var bestRank = formInputRank(best);
+    var peers = candidates.filter(function (c) {
+      return formInputRank(c) === bestRank;
+    });
+    if (peers.length > 1) {
+      var v = best.value;
+      var allAgree = peers.every(function (c) {
+        return c.value === v;
+      });
+      if (!allAgree) return { input: null, ambiguous: true };
+    }
+    return { input: best, ambiguous: false };
+  };
+
+  /**
+   * Task 4A.5 (strict ownership) — the Horizon `<variant-picker>` (or legacy
+   * `<variant-selects>`) that belongs to THIS block's section and product. `null` when
+   * none exists (a single-option product, or a non-Horizon theme). When more than one
+   * exists and none can be tied to `this.shopifyProductId` via `data-product-id`,
+   * returns `{ picker: null, ambiguous: true }` — callers fail closed.
+   */
+  PricingBlock.prototype.resolveOwnedVariantPicker = function () {
+    var container = this.resolveSectionContainer();
+    if (!container) return { picker: null, ambiguous: false };
+
+    var found = container.querySelectorAll("variant-picker, variant-selects");
+    var candidates = [];
+    for (var i = 0; i < found.length; i++) {
+      if (!isExcludedFormContext(found[i])) candidates.push(found[i]);
+    }
+    if (candidates.length === 0) return { picker: null, ambiguous: false };
+    if (candidates.length === 1) return { picker: candidates[0], ambiguous: false };
+
+    var wanted = this.shopifyProductId || "";
+    if (wanted) {
+      var matched = candidates.filter(function (p) {
+        var pid = p.getAttribute("data-product-id") || "";
+        return pid && String(parseShopifyNumericId(pid) || "") === String(wanted);
+      });
+      if (matched.length === 1) return { picker: matched[0], ambiguous: false };
+    }
+    return { picker: null, ambiguous: true };
+  };
+
+  // Bubbled non-standard variant-change event names some themes/apps emit on the
+  // section. Reacting to any only schedules a reconcile against the authoritative hidden
+  // input — an event-supplied variant object is never trusted — so a broad list is safe
+  // and depends on no single theme-specific name.
+  var BUBBLED_VARIANT_EVENTS = [
+    "variant:change",
+    "variant:update",
+    "on:variant:update",
+    "product:variant-change",
+    "variantchange",
+    "shopify:variant:change",
+  ];
+
+  /**
+   * Task 4A.5 / 4A.5.1 — everything that has to track this block's owning Shopify
+   * section: Horizon variant synchronization, native cart containment, and
+   * section-replacement lifecycle. Split into two layers:
+   *
+   *   - master (bound exactly once, on `lifecycleController`): the bubbled variant
+   *     events on the section, the in-section `MutationObserver`, the
+   *     section-node-replacement observer on the section's parent, and the
+   *     `shopify:section:load` / `:unload` lifecycle listeners;
+   *   - rebindable (`_sectionBindingController`, torn down and recreated whenever
+   *     Horizon swaps the owning form / picker / native buttons in place): the
+   *     `change` / `input` listeners on the owning picker + form, and the native
+   *     containment click / submit guards.
+   */
+  PricingBlock.prototype.bindSectionScope = function () {
+    var container = this.resolveSectionContainer();
+    if (!container) return; // no section — `canUseDynamicPricing` already gates multi-variant here
+
+    var self = this;
+    var view = this.root.ownerDocument.defaultView || window;
+    var doc = this.root.ownerDocument;
+
+    if (!this._sectionScopeMasterBound) {
+      this._sectionScopeMasterBound = true;
+      var master = this.lifecycleController.signal;
+      var schedule = this.scheduleOwnedVariantReconcile.bind(this);
+
+      for (var b = 0; b < BUBBLED_VARIANT_EVENTS.length; b++) {
+        container.addEventListener(BUBBLED_VARIANT_EVENTS[b], schedule, { signal: master });
+      }
+
+      if (typeof view.MutationObserver === "function") {
+        // In-section: hidden-input `value` attribute changes, hidden-input / product-form
+        // / native-button replacement, and section inner-HTML re-render.
+        this.horizonVariantObserver = new view.MutationObserver(function () {
+          self.scheduleSectionMaintenance();
+        });
+        this.horizonVariantObserver.observe(container, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["value"],
+        });
+
+        // A `MutationObserver` on an element cannot see that element itself being
+        // removed / replaced — so observe the section's PARENT, filtered to childList
+        // only, purely to notice the section node leaving the DOM. Never the whole
+        // document.
+        var parent = container.parentNode;
+        if (parent && parent.nodeType === 1) {
+          this.sectionReplacementObserver = new view.MutationObserver(function () {
+            self.handleSectionNodeReplacement();
+          });
+          this.sectionReplacementObserver.observe(parent, { childList: true });
+        }
+      }
+
+      // Theme Editor section lifecycle — strictly filtered to THIS section id, cleaned
+      // up with the master signal.
+      var onLifecycle = this.handleSectionLifecycleEvent.bind(this);
+      doc.addEventListener("shopify:section:load", onLifecycle, { signal: master });
+      doc.addEventListener("shopify:section:unload", onLifecycle, { signal: master });
+    }
+
+    this.bindRebindableSectionListeners();
+  };
+
+  /**
+   * Task 4A.5.1 — (re)bind the listeners that are attached to specific owning-section
+   * NODES (the picker, the product form, the native buttons), so a Horizon in-place
+   * swap of any of them can't leave this block listening to a detached element. Aborts
+   * the previous binding generation first, so nothing ever stacks.
+   */
+  PricingBlock.prototype.bindRebindableSectionListeners = function () {
+    if (this.destroyed) return;
+    var container = this.resolveSectionContainer();
+    if (!container) return;
+
+    if (this._sectionBindingController) this._sectionBindingController.abort();
+    this._sectionBindingController = new AbortController();
+    var signal = this._sectionBindingController.signal;
+
+    var formInfo = this.resolveOwnedProductFormInput();
+    var pickerInfo = this.resolveOwnedVariantPicker();
+
+    // Native containment first — it must hold in EVERY state, including the ambiguous /
+    // fail-closed one below (an unsigned native add is exactly what must not slip
+    // through when we cannot safely sync).
+    this.applyNativeCartContainment(signal);
+
+    if (formInfo.ambiguous || pickerInfo.ambiguous) {
+      if (!this.variantSyncUnavailable) this.failClosedForSync();
+      this._boundOwnerForm = null;
+      this._boundOwnerPicker = null;
+      return;
+    }
+
+    this.formVariantInput = formInfo.input;
+    this.variantOwnershipAmbiguous = false;
+    this._boundOwnerForm = formInfo.input ? formInfo.input.closest("product-form, form") : null;
+    this._boundOwnerPicker = pickerInfo.picker || null;
+
+    var schedule = this.scheduleOwnedVariantReconcile.bind(this);
+    var targets = [];
+    if (this._boundOwnerPicker) targets.push(this._boundOwnerPicker);
+    var realForm = formInfo.input ? formInfo.input.closest("form") : null;
+    if (realForm && targets.indexOf(realForm) === -1) targets.push(realForm);
+    for (var i = 0; i < targets.length; i++) {
+      targets[i].addEventListener("change", schedule, { signal: signal });
+      targets[i].addEventListener("input", schedule, { signal: signal });
+    }
+  };
+
+  /**
+   * Task 4A.5.2 / 5B.3A.1 — whether this block must CONTAIN the native Shopify cart.
+   *
+   * `true` when enforcement is intended (a valid Shopify product id) AND the
+   * authoritative enforcement decision is NOT an explicit `bypass`. It is DELIBERATELY
+   * INDEPENDENT of variant-metadata validity: a block whose `data-variant-map` is
+   * missing / blank / malformed / empty / inconsistent, or whose section
+   * synchronization has failed, or that hit a pricing/catalog error, still holds native
+   * containment (fail closed) — UNLESS the server has told it, via
+   * `data.enforcement.state === "bypass"`, that enforcement is explicitly, safely OFF
+   * for this product (a `disabled` shop policy, or a pilot-unmarked product).
+   */
+  PricingBlock.prototype.nativeContainmentRequired = function () {
+    return this.pricingEnforcementIntended === true && this._enforcementState !== "bypass";
+  };
+
+  /**
+   * Task 5B.3A.1 — apply an authoritative server enforcement state. `"bypass"` releases
+   * native containment (an explicit safe-native-bypass); `"enforce"` / `"block"` /
+   * anything unrecognised keeps (or re-asserts) containment — fail closed.
+   */
+  PricingBlock.prototype.updateEnforcementState = function (state) {
+    if (this.destroyed) return;
+    var next = state === "enforce" || state === "bypass" || state === "block" ? state : "block";
+    if (next === this._enforcementState && next !== "bypass") {
+      // no change, and not a bypass we might still need to (re-)release for — nothing to do
+      return;
+    }
+    this._enforcementState = next;
+    if (next === "bypass") {
+      this.releaseNativeCartContainment();
+    } else {
+      // block / enforce → make sure the native cart is (still) contained, e.g. after a
+      // shop toggled back from `disabled` to `pilot`.
+      this.applyNativeCartContainment();
+    }
+  };
+
+  /**
+   * Task 5B.3A.1 / 5B.3B — undo native containment for an authoritative `bypass`:
+   * restore each contained control's EXACT original accessibility state (original
+   * `disabled`; `aria-disabled` restored to its exact prior value, or removed entirely
+   * if it never existed), drop the bookkeeping markers, and remove the capture-phase
+   * click / submit guards. Never re-enables a control Shopify / the theme originally
+   * disabled, and never leaves a stray `aria-disabled` the theme did not author.
+   */
+  PricingBlock.prototype.releaseNativeCartContainment = function () {
+    if (this.destroyed) return;
+    var container = this.resolveSectionContainer();
+    if (!container) return;
+    var self = this;
+
+    var controls = container.querySelectorAll('[data-imprintid-contained="1"]');
+    for (var i = 0; i < controls.length; i++) {
+      var el = controls[i];
+      if (!self.inThisSection(el)) continue;
+      try {
+        if ("disabled" in el) el.disabled = el.getAttribute("data-imprintid-was-disabled") === "1";
+      } catch (e) {
+        /* no `disabled` IDL attribute */
+      }
+      if (el.getAttribute("data-imprintid-had-aria-disabled") === "1") {
+        el.setAttribute("aria-disabled", el.getAttribute("data-imprintid-orig-aria-disabled") || "");
+      } else {
+        el.removeAttribute("aria-disabled");
+      }
+      el.removeAttribute("data-imprintid-was-disabled");
+      el.removeAttribute("data-imprintid-had-aria-disabled");
+      el.removeAttribute("data-imprintid-orig-aria-disabled");
+      el.removeAttribute("data-imprintid-contained");
+      el.removeEventListener("click", this._nativeControlClickGuard, true);
+    }
+
+    var forms = container.querySelectorAll('[data-imprintid-contained-form="1"]');
+    for (var f = 0; f < forms.length; f++) {
+      if (!self.inThisSection(forms[f])) continue;
+      forms[f].removeAttribute("data-imprintid-contained-form");
+      forms[f].removeEventListener("submit", this._nativeFormSubmitGuard, true);
+    }
+
+    this.root.setAttribute("data-imprintid-native-contained", "false");
+  };
+
+  /**
+   * Task 4A.5.1 — disable + block every native purchase control in the owning section
+   * (main Add-to-Cart, sticky Add-to-Cart, `button[type=submit]`, `input[type=submit]`,
+   * `name="add"` controls, and `[form="<owning-form-id>"]` controls that live in the
+   * SAME section), and neutralise the owning form's own `submit` (covering
+   * `form.requestSubmit()` and Horizon's / a theme's submit handler). Idempotent: a
+   * control already carrying the containment marker is only re-checked, never re-set, so
+   * a re-run produces no mutation and cannot feed the section `MutationObserver` into a
+   * loop. Does NOT patch `HTMLFormElement.prototype`; does NOT touch the ImprintID
+   * button, quick-add / recommendation / complementary forms, or another section.
+   */
+  PricingBlock.prototype.applyNativeCartContainment = function (signal) {
+    if (this.destroyed) return;
+    var sig = signal || (this._sectionBindingController && this._sectionBindingController.signal) || this.lifecycleController.signal;
+    var container = this.resolveSectionContainer();
+    if (!container || !this.nativeContainmentRequired()) return;
+    var self = this;
+
+    // Owning-section product forms (never our own block, never an excluded context).
+    var ownerForms = [];
+    var formNodes = container.querySelectorAll(
+      'product-form form,form[action*="/cart/add"],form[data-type="add-to-cart-form"]',
     );
+    for (var f = 0; f < formNodes.length; f++) {
+      var fm = formNodes[f];
+      if (self.root.contains(fm) || isExcludedFormContext(fm) || !self.inThisSection(fm)) continue;
+      ownerForms.push(fm);
+    }
+
+    var controls = [];
+    var addControl = function (el) {
+      if (!el || self.root.contains(el) || isExcludedFormContext(el) || !self.inThisSection(el)) return;
+      if (controls.indexOf(el) === -1) controls.push(el);
+    };
+
+    // 1–3: submit controls inside each owning form, plus `name="add"` controls anywhere
+    // in the section, plus `[form="<id>"]` controls that reference an owning form.
+    for (var of2 = 0; of2 < ownerForms.length; of2++) {
+      var list = ownerForms[of2].querySelectorAll(NATIVE_SUBMIT_SELECTOR);
+      for (var c = 0; c < list.length; c++) addControl(list[c]);
+      var fid = ownerForms[of2].id;
+      if (fid) {
+        var linked = container.querySelectorAll('[form="' + cssEscapeIdent(fid) + '"]');
+        for (var l = 0; l < linked.length; l++) {
+          var lc = linked[l];
+          if (lc.tagName === "BUTTON" || lc.type === "submit" || lc.getAttribute("name") === "add") addControl(lc);
+        }
+      }
+    }
+    var addNamed = container.querySelectorAll('button[name="add"],input[name="add"]');
+    for (var an = 0; an < addNamed.length; an++) addControl(addNamed[an]);
+
+    // 4: sticky / floating add-to-cart bars in this section.
+    var stickies = container.querySelectorAll(STICKY_WRAPPER_SELECTOR);
+    for (var s = 0; s < stickies.length; s++) {
+      if (isExcludedFormContext(stickies[s]) || !self.inThisSection(stickies[s])) continue;
+      var sc = stickies[s].querySelectorAll(NATIVE_SUBMIT_SELECTOR);
+      for (var sci = 0; sci < sc.length; sci++) addControl(sc[sci]);
+    }
+
+    for (var i = 0; i < controls.length; i++) {
+      var el = controls[i];
+      if (el.getAttribute("data-imprintid-contained") !== "1") {
+        // Task 5B.3B — record the control's EXACT original accessibility state so an
+        // authoritative `bypass` can restore it byte-for-byte and never re-enable /
+        // re-label something the theme itself had disabled (e.g. an out-of-stock
+        // variant): (1) original `disabled`; (2) whether `aria-disabled` existed at all;
+        // (3) its exact original value when it did.
+        try {
+          el.setAttribute("data-imprintid-was-disabled", "disabled" in el && el.disabled ? "1" : "0");
+        } catch (e) {
+          el.setAttribute("data-imprintid-was-disabled", "0");
+        }
+        if (el.hasAttribute("aria-disabled")) {
+          el.setAttribute("data-imprintid-had-aria-disabled", "1");
+          el.setAttribute("data-imprintid-orig-aria-disabled", el.getAttribute("aria-disabled") || "");
+        } else {
+          el.setAttribute("data-imprintid-had-aria-disabled", "0");
+        }
+        try {
+          if ("disabled" in el) el.disabled = true;
+        } catch (e2) {
+          /* control type without a `disabled` IDL attribute — aria + click guard cover it */
+        }
+        el.setAttribute("data-imprintid-contained", "1");
+        el.setAttribute("aria-disabled", "true");
+      }
+      // `addEventListener` de-dupes by (type, listener, capture); a re-run with a fresh
+      // signal after an abort re-arms cleanly, a re-run without one is a no-op.
+      el.addEventListener("click", this._nativeControlClickGuard, { capture: true, signal: sig });
+    }
+
+    for (var w = 0; w < ownerForms.length; w++) {
+      ownerForms[w].setAttribute("data-imprintid-contained-form", "1");
+      ownerForms[w].addEventListener("submit", this._nativeFormSubmitGuard, { capture: true, signal: sig });
+    }
+
+    this.root.setAttribute("data-imprintid-native-contained", controls.length || ownerForms.length ? "true" : "false");
+  };
+
+  /**
+   * True when `el` is inside THIS block's exact owning section — never a nested inner
+   * section and never a sibling section (e.g. a product-recommendations section). Walks
+   * up to the nearest section marker (`#shopify-section-*` or `[data-section-id]`,
+   * ignoring the block's own root, which also carries `data-section-id`) and compares
+   * ids; a marker for a DIFFERENT section short-circuits to `false`.
+   */
+  PricingBlock.prototype.inThisSection = function (el) {
+    if (!this._sectionId) return true;
+    var mine = "shopify-section-" + this._sectionId;
+    var node = el;
+    while (node && node.nodeType === 1) {
+      if (node.id === mine) return true;
+      var marked = node.getAttribute ? node.getAttribute("data-section-id") : null;
+      if (marked && node !== this.root) return marked === this._sectionId;
+      if (node.id && node.id.indexOf("shopify-section-") === 0) return node.id === mine;
+      node = node.parentNode;
+    }
+    return true;
+  };
+
+  PricingBlock.prototype.handleContainedControlClick = function (event) {
+    var el = event.currentTarget;
+    if (el && el.getAttribute && el.getAttribute("data-imprintid-contained") === "1") {
+      event.preventDefault();
+      if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+      event.stopPropagation();
+    }
+  };
+
+  PricingBlock.prototype.handleContainedFormSubmit = function (event) {
+    var form = event.currentTarget;
+    if (form && form.getAttribute && form.getAttribute("data-imprintid-contained-form") === "1") {
+      event.preventDefault();
+      if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+      event.stopPropagation();
+    }
+  };
+
+  /**
+   * Task 4A.5.1 — coalesce a burst of in-section mutations (Horizon's section re-render
+   * fires many) into ONE maintenance pass on the next microtask.
+   */
+  PricingBlock.prototype.scheduleSectionMaintenance = function () {
+    if (this.destroyed || this._sectionMaintenanceScheduled) return;
+    this._sectionMaintenanceScheduled = true;
+    var self = this;
+    var view = this.root.ownerDocument.defaultView || window;
+    var run = function () {
+      self._sectionMaintenanceScheduled = false;
+      self.runSectionMaintenance();
+    };
+    if (typeof view.queueMicrotask === "function") view.queueMicrotask(run);
+    else view.setTimeout(run, 0);
+  };
+
+  /**
+   * Task 4A.5.1 — the in-section `MutationObserver` fired. If this block's root is gone,
+   * defer to `handleSectionNodeReplacement`. Otherwise: if Horizon swapped the owning
+   * form / picker node in place, rebind the node-scoped listeners; always re-assert
+   * native containment (a replaced main / sticky button is contained immediately); and
+   * reconcile the currently selected variant.
+   */
+  PricingBlock.prototype.runSectionMaintenance = function () {
+    if (this.destroyed) return;
+    if (!this.root.isConnected) {
+      this.handleSectionNodeReplacement();
+      return;
+    }
+    var formInfo = this.resolveOwnedProductFormInput();
+    var pickerInfo = this.resolveOwnedVariantPicker();
+    var newForm = formInfo.input ? formInfo.input.closest("product-form, form") : null;
+    var newPicker = pickerInfo.picker || null;
+    if (newForm !== this._boundOwnerForm || newPicker !== this._boundOwnerPicker) {
+      this.bindRebindableSectionListeners();
+    } else {
+      this.applyNativeCartContainment();
+    }
+    this.reconcileOwnedVariant();
+  };
+
+  /**
+   * Task 4A.5.1 — the owning section node itself was removed or replaced (its parent's
+   * child list changed and our root / section is no longer resolvable). Tear this
+   * instance down completely and reconstruct a fresh block for the replacement section's
+   * root, exactly once.
+   */
+  PricingBlock.prototype.handleSectionNodeReplacement = function () {
+    if (this.destroyed) return;
+    if (this.root.isConnected && this.resolveSectionContainer()) return; // false alarm
+    var doc = this.root.ownerDocument;
+    var id = this._sectionId;
+    this.destroy();
+    if (!id) return;
+    var scope =
+      doc.getElementById("shopify-section-" + id) ||
+      (function () {
+        var marked = doc.querySelectorAll('[data-section-id="' + id + '"]');
+        for (var i = 0; i < marked.length; i++) if (marked[i].querySelector && marked[i].querySelector("[data-imprintid-pricing]")) return marked[i];
+        return null;
+      })();
+    if (!scope) return;
+    var fresh = scope.querySelector("[data-imprintid-pricing]");
+    if (fresh && !fresh.imprintIdPricingBlock) {
+      if (!fresh.id) fresh.id = "imprintid-pricing-reinit-" + id;
+      fresh.imprintIdPricingBlock = new PricingBlock(fresh);
+    }
+  };
+
+  /**
+   * Task 4A.5.1 — a `shopify:section:load` / `:unload` for THIS section id (Theme
+   * Editor). If our root survived (in-place inner re-render kept it), rebind node-scoped
+   * listeners + containment and reconcile. If it's gone, hand off to
+   * `handleSectionNodeReplacement`. Repeated events are naturally idempotent — a
+   * same-variant reconcile issues no request, and rebinding aborts the prior generation.
+   */
+  PricingBlock.prototype.handleSectionLifecycleEvent = function (event) {
+    if (this.destroyed) return;
+    var detail = event && event.detail;
+    if (!detail || String(detail.sectionId) !== String(this._sectionId)) return;
+    if (!this.root.isConnected || !this.resolveSectionContainer()) {
+      this.handleSectionNodeReplacement();
+      return;
+    }
+    this.bindRebindableSectionListeners();
+    this.scheduleOwnedVariantReconcile();
+  };
+
+  /**
+   * Task 4A.5 (request deduplication). Horizon emits several signals for one selection
+   * (a radio `change`, an `input`, then — once it has swapped in the re-rendered section
+   * HTML / updated the hidden input — a mutation the observer sees). This coalesces the
+   * whole burst into ONE `reconcileOwnedVariant` on the next microtask: every signal in
+   * the same task collapses to a single reconcile, and each later signal (e.g. the
+   * mutation that lands after Horizon finishes updating the hidden input) schedules
+   * exactly one more. Not a recurring timer. `reconcileOwnedVariant` itself no-ops when
+   * the hidden input already agrees with the current selection, so a redundant run from
+   * this block's own re-render costs only a DOM read.
+   */
+  PricingBlock.prototype.scheduleOwnedVariantReconcile = function () {
+    if (this.destroyed) return;
+    if (this._ownedReconcileScheduled) return;
+    this._ownedReconcileScheduled = true;
+    var self = this;
+    var view = this.root.ownerDocument.defaultView || window;
+    var run = function () {
+      self._ownedReconcileScheduled = false;
+      self.reconcileOwnedVariant();
+    };
+    if (typeof view.queueMicrotask === "function") view.queueMicrotask(run);
+    else view.setTimeout(run, 0);
+  };
+
+  /**
+   * Task 4A.5 (variant adoption lifecycle). Re-resolves ownership (the form / hidden
+   * input / section may have been replaced by Horizon), fails closed on ambiguity, then
+   * reconciles against the authoritative hidden `input[name="id"]`. When it names a
+   * different, syntactically valid id than the current selection, invalidates the
+   * current request generation and hands the id to the ONE shared adoption path
+   * (`resolveAndAdoptVariant`) — which validates it against `data-variant-map`, aborts
+   * in-flight catalog/pricing requests, clears `cartPricing` + every quote-ownership
+   * field (disabling Add to Cart), retains the immutable Shopify product id, and issues
+   * exactly one fresh calculation whose response is accepted only if still current.
+   * Selecting the already-active variant produces no request.
+   */
+  PricingBlock.prototype.reconcileOwnedVariant = function () {
+    if (this.destroyed || !this.root.isConnected) return;
+    if (!this.canUseDynamicPricing()) {
+      // Idempotent: `failClosedForSync` mutates this section's DOM, which the observer
+      // sees — calling it again on every resulting reconcile would spin. It has already
+      // put the block in the fail-closed state.
+      if (!this.variantSyncUnavailable) this.failClosedForSync();
+      return;
+    }
+
+    var formInfo = this.resolveOwnedProductFormInput();
+    var pickerInfo = this.resolveOwnedVariantPicker();
+    if (formInfo.ambiguous || pickerInfo.ambiguous) {
+      if (!this.variantSyncUnavailable) this.failClosedForSync();
+      return;
+    }
+    this.formVariantInput = formInfo.input;
+    this.variantOwnershipAmbiguous = false;
+
+    if (!formInfo.input) return; // no authoritative field — event/initial state stands
+    var raw = formInfo.input.value;
+    if (!isPositiveDigitString(raw)) return; // Horizon hasn't settled a usable id yet
+
+    // Idempotency guard: the shared adoption path renders into this section, which the
+    // MutationObserver sees, which schedules another reconcile. On success `raw` now
+    // equals `selectedVariantId` (next check); on failure (unmapped / unavailable id)
+    // it does not — this stops that case from re-adopting the same bad id forever.
+    if (raw === this._lastReconciledFormValue) return;
+    this._lastReconciledFormValue = raw;
+
+    if (raw === this.selectedVariantId) return; // already on this variant — no request
+
+    // Adoption lifecycle: bump the variant-selection generation so any pricing response
+    // captured against the prior selection is discarded on arrival (see
+    // `_recalculateImmediate`'s stale guard), then run the shared adoption path.
+    this.variantSelectionSequence++;
+    this.resolveAndAdoptVariant(raw);
   };
 
   /**
@@ -966,9 +1967,7 @@ import {
     // Immediate invalidation (before we even know what the new variant is) — a quote
     // computed for the old selection must never remain addable once ANY change has
     // started, even if the new variant turns out to be unavailable or invalid.
-    this.setCartPricing(null);
-    this.quotedVariantId = null;
-    this.quotedVariantSku = null;
+    this.invalidateSignedQuote();
     if (this.activeController) this.activeController.abort();
 
     var seq = ++this.variantSelectionSequence;
@@ -1053,9 +2052,7 @@ import {
     }
 
     // B/C
-    this.setCartPricing(null);
-    this.quotedVariantId = null;
-    this.quotedVariantSku = null;
+    this.invalidateSignedQuote();
     if (this.activeController) this.activeController.abort();
 
     // A/G
@@ -1065,13 +2062,23 @@ import {
       return;
     }
 
-    // D
+    // D — adopt the new variant's identity FIRST, so every subsequent check (and any
+    // response's quote-ownership check) compares against the real current selection.
     this.selectedVariantId = numericId;
-    this.selectedVariantAvailable = true;
-    this.clearError();
+    this.selectedVariantAvailable = entry.available;
     var skuChanged = entry.sku !== this.selectedVariantSku;
     this.selectedVariantSku = entry.sku;
     this.sku = entry.sku;
+    this.clearError();
+
+    // Task 4A.1 §4: re-evaluate readiness against the NOW-ACTIVE selection. A blank-SKU
+    // variant with no Shopify product id (nothing for the server to resolve via a
+    // ProductPricingOverride) fails closed here — even if the initially rendered
+    // variant had a non-blank SKU.
+    if (!this.canUseDynamicPricing()) {
+      this.handleVariantUnavailable();
+      return;
+    }
 
     if (skuChanged) {
       // E — `fetchCatalog` replaces `this.catalog` before its own recalculation ever
@@ -1090,9 +2097,7 @@ import {
 
   PricingBlock.prototype.handleVariantUnavailable = function () {
     this.selectedVariantAvailable = false;
-    this.setCartPricing(null);
-    this.quotedVariantId = null;
-    this.quotedVariantSku = null;
+    this.invalidateSignedQuote();
     this.hideLoading();
     this.els.error.textContent = t(this.root, MESSAGES.variantUnavailable);
     this.els.error.hidden = false;
@@ -1111,9 +2116,7 @@ import {
     if (seq !== undefined && seq !== this.variantSelectionSequence) return;
     if (selectSeq !== undefined && selectSeq !== this.productSelectSeq) return;
     this.selectedVariantAvailable = false;
-    this.setCartPricing(null);
-    this.quotedVariantId = null;
-    this.quotedVariantSku = null;
+    this.invalidateSignedQuote();
     this.hideLoading();
     this.els.error.textContent = t(this.root, MESSAGES.variantSyncError);
     this.els.error.hidden = false;
@@ -1173,16 +2176,25 @@ import {
       return;
     }
 
+    var self = this;
+    var quantity = this.readQuantity();
+    if (!quantity.valid) return;
+
+    // Task 4A: Add to Cart requires the current quote to be owned by BOTH the active
+    // Shopify product id AND the currently selected variant id (plus SKU + an available
+    // variant). Task 5B.3A adds: a held signed quote at all, an unchanged quantity, and
+    // — for a v2 quote — a COMPLETE, unexpired v2 payload whose bound product/variant/
+    // quantity still match. A direct programmatic `addToCart()` runs this exact check.
     var mismatch =
       !this.cartPricing ||
+      this.shopifyProductId !== this.quotedProductId ||
       this.selectedVariantId !== this.quotedVariantId ||
       this.selectedVariantSku !== this.quotedVariantSku ||
+      this.quotedQuantity !== quantity.value ||
       !this.selectedVariantAvailable;
 
     if (mismatch) {
-      this.setCartPricing(null);
-      this.quotedVariantId = null;
-      this.quotedVariantSku = null;
+      this.invalidateSignedQuote();
       this.els.addToCartStatus.textContent = t(this.root, MESSAGES.variantChanged);
       // Only worth kicking off a fresh quote if we actually have something valid to
       // quote for — an unavailable/unresolved selection has nothing to recalculate.
@@ -1190,9 +2202,32 @@ import {
       return;
     }
 
-    var self = this;
-    var quantity = this.readQuantity();
-    if (!quantity.valid) return;
+    // Task 5B.3A — serialize the approved signed quote into cart-line properties.
+    //   - v2 (production): `signedV2QuoteAttributes` — v2 ONLY, requires a complete,
+    //     unexpired, owning payload; returns exactly the four private attributes
+    //     UNCHANGED. The browser never constructs, edits, merges, re-signs, or submits
+    //     v1 attributes on this path.
+    //   - v1 (non-production transition only): the legacy serializer.
+    // `null` from either → the quote is structurally unusable / stale / expired: fail
+    // closed, never POST /cart/add.js.
+    var isV2 = Number(this.cartPricing.version) === 2;
+    var pricingProperties;
+    if (isV2) {
+      if (!this.v2QuoteOwns(this.cartPricing, this.quotedProductId, this.quotedVariantId, quantity.value)) {
+        this.invalidateSignedQuote();
+        this.els.addToCartStatus.textContent = t(this.root, MESSAGES.variantChanged);
+        if (this.selectedVariantId && this.selectedVariantAvailable) this.recalculate();
+        return;
+      }
+      pricingProperties = signedV2QuoteAttributes(this.cartPricing);
+    } else {
+      pricingProperties = legacyV1QuoteAttributes(this.cartPricing);
+    }
+    if (!pricingProperties) {
+      this.invalidateSignedQuote();
+      this.els.addToCartStatus.textContent = t(this.root, MESSAGES.configurationError);
+      return;
+    }
 
     // Race decision (Task 2B, requirement F, "Race decision"): once we're past the
     // checks above and the request below actually starts, the click-time quoted
@@ -1215,11 +2250,7 @@ import {
           {
             id: submittedVariantId,
             quantity: quantity.value,
-            properties: {
-              _imprintid_pricing_version: String(this.cartPricing.version),
-              _imprintid_pricing_payload: this.cartPricing.payload,
-              _imprintid_pricing_signature: this.cartPricing.signature,
-            },
+            properties: pricingProperties,
           },
         ],
       }),
@@ -1263,8 +2294,18 @@ import {
   PricingBlock.prototype.destroy = function () {
     if (this.destroyed) return;
     this.destroyed = true;
+    this._policyProbeSeq++; // discard any in-flight policy-bootstrap response
     this.lifecycleController.abort();
+    if (this._sectionBindingController) this._sectionBindingController.abort();
     if (this.activeController) this.activeController.abort();
+    if (this.horizonVariantObserver) {
+      this.horizonVariantObserver.disconnect();
+      this.horizonVariantObserver = null;
+    }
+    if (this.sectionReplacementObserver) {
+      this.sectionReplacementObserver.disconnect();
+      this.sectionReplacementObserver = null;
+    }
   };
 
   function initAll() {
@@ -1272,7 +2313,7 @@ import {
     roots.forEach(function (root, index) {
       // Idempotent: never construct a second PricingBlock (and a second full set of
       // listeners) against a root that already has one — see Task 2B, requirement G.
-      if (root.imprintIdPricingBlock) return;
+      if (root.imprintIdPricingBlock && !root.imprintIdPricingBlock.destroyed) return;
       if (!root.id) root.id = "imprintid-pricing-" + index;
       root.imprintIdPricingBlock = new PricingBlock(root);
     });
@@ -1283,6 +2324,12 @@ import {
   } else {
     initAll();
   }
+
+  // Task 4A.5.1 — Theme Editor / storefront section re-render inserts a fresh block root
+  // with no instance. `initAll` is idempotent (skips roots that already have a live
+  // block), so re-running it here safely constructs a block for the replacement root;
+  // the stale instance tears itself down via its own section-lifecycle handling.
+  document.addEventListener("shopify:section:load", initAll);
 
   window.ImprintIdPricing = { PricingBlock: PricingBlock };
 })();

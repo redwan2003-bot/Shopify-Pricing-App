@@ -259,3 +259,45 @@
     max-width: 10rem;
   }
 }
+
+/* Collapsible "Attachments" box — all ATTACHMENT-kind option groups in one clickable
+   disclosure. Each category is still an independent <select> inside. */
+.imprintid-pricing__attachments {
+  border: 1px solid var(--imprintid-border);
+  border-radius: var(--imprintid-radius);
+  padding: 0 1em;
+}
+
+.imprintid-pricing__attachments > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.85em 0;
+  list-style: none;
+}
+
+.imprintid-pricing__attachments > summary::-webkit-details-marker {
+  display: none;
+}
+
+.imprintid-pricing__attachments > summary::after {
+  content: "▸";
+  float: right;
+  font-weight: 400;
+  color: var(--imprintid-muted);
+}
+
+.imprintid-pricing__attachments[open] > summary {
+  border-bottom: 1px solid var(--imprintid-border);
+}
+
+.imprintid-pricing__attachments[open] > summary::after {
+  content: "▾";
+}
+
+.imprintid-pricing__attachments > .imprintid-pricing__field:first-of-type {
+  padding-top: 0.85em;
+}
+
+.imprintid-pricing__attachments > .imprintid-pricing__field:last-child {
+  padding-bottom: 0.85em;
+}

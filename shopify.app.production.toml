@@ -1,0 +1,64 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+#
+# This is the app record for 0c2xdu-y4.myshopify.com's SEPARATE organization — a
+# different Shopify account/org than the one behind shopify.app.toml (client_id
+# d0d1f8d2...). Mirrors that config's scopes/webhooks/app-proxy settings so the same
+# codebase behaves identically on either store; only client_id differs.
+
+client_id = "ff2a27051df6abf548cc227e021e97a4"
+name = "ImprintID Dynamic Pricing"
+application_url = "https://example.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  # Task 6A — keep the local catalog snapshot (app/lib/catalog) in step with Shopify
+  # between full syncs. Handlers verify HMAC via `authenticate.webhook`, are shop-scoped,
+  # and dedupe by X-Shopify-Webhook-Id. NOT yet deployed/subscribed — `shopify app deploy`
+  # is a separately authorized step.
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products/create"
+  topics = [ "products/create" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products/update"
+  topics = [ "products/update" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products/delete"
+  topics = [ "products/delete" ]
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+#
+# Task 5B.3B / 5B.3B.1 — MINIMAL scopes for development Function activation + provisioning.
+# Each `write_*` scope also grants the corresponding read access, so the `read_*` scopes
+# are NOT declared:
+#   write_products         : resolve LNY01, create the DEV adjustment product, write the
+#                            product-level app-owned `$app:imprintid/pricing_policy` metafield.
+#   write_cart_transforms  : preflight-read + create ONE Cart Transform.
+#   write_validations      : preflight-read + create ONE Cart & Checkout Validation.
+# (App-reserved shop metafields — `$app:imprintid/enforcement_policy` — are writable by the
+#  owning app without a dedicated scope. `write_metaobjects` / `write_metaobject_definitions`
+#  from the Shopify app template were dropped — this app models custom data as METAFIELDS.)
+scopes = "write_products,write_cart_transforms,write_validations"
+
+[auth]
+redirect_urls = [ "https://example.com/api/auth" ]
+
+[app_proxy]
+url = "https://example.com/apps/imprintid-pricing"
+subpath = "imprintid-pricing"
+prefix = "apps"

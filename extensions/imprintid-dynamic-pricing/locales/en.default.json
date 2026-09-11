@@ -7,6 +7,7 @@
     "invalid_quantity": "Please enter a valid quantity.",
     "color_label": "Product Color",
     "decoration_legend": "Decoration",
+    "attachments_legend": "Attachments",
     "colors_label": "Number of colors",
     "colors_one": "1 color",
     "colors_two": "2+ colors",

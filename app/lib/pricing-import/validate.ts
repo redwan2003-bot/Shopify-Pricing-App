@@ -323,6 +323,21 @@ function validateOptionGroups(
         `${valuePath}.priceAdjustmentCents`,
         errors,
       );
+      checkOptionalMoney(
+        value.netPriceAdjustmentCents,
+        `${valuePath}.netPriceAdjustmentCents`,
+        errors,
+      );
+      if (
+        typeof value.priceAdjustmentCents === "number" &&
+        typeof value.netPriceAdjustmentCents === "number" &&
+        value.netPriceAdjustmentCents > value.priceAdjustmentCents
+      ) {
+        errors.push({
+          path: `${valuePath}.netPriceAdjustmentCents`,
+          message: "must not exceed priceAdjustmentCents",
+        });
+      }
     });
   });
 }

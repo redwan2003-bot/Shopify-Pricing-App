@@ -1,23 +1,25 @@
 /**
- * THIS FILE IS GENERATED — see scripts/generate-config.mjs.
+ * NON-SECRET configuration wrapper for the `imprintid-cart-pricing` Cart Transform.
  *
- * Shopify Functions have no runtime environment/secret access (no `process.env` inside
- * the WASM sandbox — see this extension's top-level doc comment in
- * cart_transform_run.ts for the full explanation). The signing secret therefore has to
- * be baked into the compiled function at build time, not read at runtime.
+ * Task 5B.3B §Phase-2 — this file is TRACKED and never contains a secret. The real
+ * signing secret is baked into the sibling `./config.secret.generated.ts`, which is:
+ *   - written by `scripts/generate-config.mjs` (run automatically by the repo-root
+ *     npm hooks `fn:config` <- `pretest` / `pretypecheck` / `predev` / `predeploy`);
+ *   - listed in `extensions/imprintid-cart-pricing/.gitignore` — it never appears in
+ *     `git status` or `git diff`.
  *
- * The checked-in value below is a deliberately non-functional placeholder — an empty
- * secret makes `verifyCartPricingAttributes` fail closed (every line is rejected,
- * nothing is ever silently trusted) rather than fail open. Before building or
- * deploying this extension for real, run:
- *
- *   IMPRINTID_CART_SIGNING_SECRET=<a real secret> node scripts/generate-config.mjs
- *
- * which overwrites this file with the real value. That secret must match
+ * A clean clone has NO `./config.secret.generated.ts`. Run
+ *   node scripts/generate-config.mjs
+ * to create it. Without `IMPRINTID_CART_SIGNING_SECRET` set, the script writes a
+ * FAIL-CLOSED empty secret (every signed line is then rejected — see
+ * `verify-payload.ts` / `verify-payload-v2.ts`), never an insecure default. With the
+ * env var set, it writes the real value — which must byte-match
  * `IMPRINTID_CART_SIGNING_SECRET` in the main app's server environment (see
- * app/lib/pricing-api/cart-signature.ts) — it is intentionally a *different* secret
- * from `SHOPIFY_API_SECRET` (the OAuth app secret): baking the OAuth secret itself into
- * a distributable WASM binary would mean a compromised/extracted function leaks full
- * app credentials, not just cart-pricing signing ability.
+ * `app/lib/pricing-api/cart-signature.ts`) and the Cart Validation Function's own
+ * generated config. See `./config.secret.generated.example.ts` for the shape.
+ *
+ * The adjustment-variant GID is deliberately NOT baked here: the Function reads it from
+ * the app-owned shop `enforcement_policy` metafield at runtime and cross-checks it
+ * against the signed payload — two independently trusted sources (Task 5A §7).
  */
-export const CART_SIGNING_SECRET = "";
+export { CART_SIGNING_SECRET } from "./config.secret.generated.ts";

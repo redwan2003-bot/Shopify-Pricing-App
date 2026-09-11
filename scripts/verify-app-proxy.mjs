@@ -141,8 +141,11 @@ try {
       attachmentGroup?.kind === "ATTACHMENT" && featuresGroup?.kind === "FEATURE",
     );
     check(
-      "Case E: LNY01 has no product colors — documented absence, empty array",
-      body.ok === true && Array.isArray(body.data.productColors) && body.data.productColors.length === 0,
+      "Case E: LNY01 exposes its three stock colors (Black/Red/Blue), each Included ($0)",
+      body.ok === true &&
+        Array.isArray(body.data.productColors) &&
+        body.data.productColors.length === 3 &&
+        body.data.productColors.every((c) => c.priceAdjustmentCents === 0),
     );
     check(
       "Case E: decorationColorCharges exposes the real color-2 setup/run pricing",
