@@ -13,7 +13,7 @@ if [ -n "$DATABASE_URL" ]; then
   case "$DATABASE_URL" in
     postgres*|postgresql*)
       echo "PostgreSQL database detected. Synchronizing Prisma schema..."
-      npx prisma db push --schema=prisma/schema.postgresql.prisma --accept-data-loss || true
+      npx prisma db push --schema=prisma/schema.postgresql.prisma --accept-data-loss --skip-generate || true
       ;;
     *)
       echo "Warning: DATABASE_URL does not start with postgresql:// or postgres://."

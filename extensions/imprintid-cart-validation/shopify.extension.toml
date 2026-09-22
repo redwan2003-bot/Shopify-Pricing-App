@@ -18,5 +18,5 @@ description = "t:description"
   # by `node scripts/generate-config.mjs`, run automatically by the repo-root npm hooks
   # `pretest` / `pretypecheck` / `predev` / `predeploy` (see package.json `fn:config`).
   # A custom `command` here would REPLACE the CLI's javy build, so it stays empty.
-  command = ""
+  command = "node -e \"\""
   path = "dist/function.wasm"
