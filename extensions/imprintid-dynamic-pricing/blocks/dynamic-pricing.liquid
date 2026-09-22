@@ -263,17 +263,17 @@
         </button>
         <button
           type="button"
-          class="imprintid-pricing__btn imprintid-pricing__btn--secondary"
-          data-imprintid-pricing-request-info
-        >
-          {{ 'dynamic_pricing.request_info' | t | default: 'Request Info' }}
-        </button>
-        <button
-          type="button"
-          class="imprintid-pricing__btn imprintid-pricing__btn--secondary"
+          class="imprintid-pricing__btn imprintid-pricing__btn--secondary imprintid-pricing__btn--quote"
           data-imprintid-pricing-request-quote
         >
           {{ 'dynamic_pricing.request_quote' | t | default: 'Request Quote' }}
+        </button>
+        <button
+          type="button"
+          class="imprintid-pricing__btn imprintid-pricing__btn--tertiary imprintid-pricing__btn--info"
+          data-imprintid-pricing-request-info
+        >
+          {{ 'dynamic_pricing.request_info' | t | default: 'Request Info' }}
         </button>
       </div>
       <p class="imprintid-pricing__add-to-cart-status" data-imprintid-pricing-add-to-cart-status aria-live="polite"></p>
@@ -379,30 +379,3 @@
 {%- comment -%} Module scripts are deferred by default; dynamic-pricing.js imports
    dynamic-pricing-utils.js directly (see that file), so only one tag is needed here. {%- endcomment -%}
 <script type="module" src="{{ 'dynamic-pricing.js' | asset_url }}"></script>
-
-{% schema %}
-{
-  "name": "Dynamic Pricing",
-  "target": "section",
-  "settings": [
-    {
-      "type": "product",
-      "id": "product",
-      "label": "Product",
-      "autofill": true
-    },
-    {
-      "type": "text",
-      "id": "sku_override",
-      "label": "Override SKU",
-      "info": "Leave blank to use the current product's SKU automatically."
-    },
-    {
-      "type": "checkbox",
-      "id": "show_breakdown_by_default",
-      "label": "Expand price breakdown by default",
-      "default": false
-    }
-  ]
-}
-{% endschema %}
