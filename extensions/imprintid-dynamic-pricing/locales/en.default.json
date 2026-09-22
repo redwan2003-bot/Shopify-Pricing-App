@@ -45,6 +45,12 @@
     "option_price_unavailable": "price unavailable",
     "variant_changed": "Updating pricing for your selection…",
     "variant_unavailable": "This combination isn't available. Please choose another option.",
-    "variant_sync_error": "We couldn't confirm your selection. Please try again."
+    "variant_sync_error": "We couldn't confirm your selection. Please try again.",
+    "qty_placeholder": "Qty*",
+    "color_placeholder": "Color",
+    "attachments_placeholder": "Attachments",
+    "optional_features_placeholder": "Optional Features",
+    "request_info": "Request Info",
+    "request_quote": "Request Quote"
   }
 }

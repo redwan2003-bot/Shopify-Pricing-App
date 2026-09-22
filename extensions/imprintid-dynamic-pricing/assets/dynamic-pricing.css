@@ -6,13 +6,18 @@
    dropped into, rather than importing an unrelated design system. */
 
 .imprintid-pricing {
-  --imprintid-border: rgba(0, 0, 0, 0.12);
+  --imprintid-border: #d1d5db;
   --imprintid-muted: rgba(0, 0, 0, 0.6);
   --imprintid-error: #c0392b;
   --imprintid-error-bg: rgba(192, 57, 43, 0.08);
   --imprintid-radius: 8px;
+  --imprintid-btn-primary: #3f6f87;
+  --imprintid-btn-primary-hover: #355e73;
+  --imprintid-btn-secondary: #467189;
+  --imprintid-btn-secondary-hover: #3a6078;
   box-sizing: border-box;
-  max-width: 32rem;
+  width: min(100%, 46rem);
+  max-width: 46rem;
   font-size: 1rem;
   line-height: 1.5;
 }
@@ -24,8 +29,7 @@
 }
 
 .imprintid-pricing__heading {
-  margin: 0 0 0.75em;
-  font-size: 1.1em;
+  display: none;
 }
 
 .imprintid-pricing__unavailable,
@@ -40,6 +44,25 @@
   gap: 1.25em;
 }
 
+.imprintid-pricing__main-controls {
+  display: grid;
+  grid-template-columns: minmax(10.5rem, 11rem) minmax(0, 1fr);
+  gap: 0.6rem;
+}
+
+.imprintid-pricing__grid-row {
+  display: contents;
+}
+
+/* --- Grid row: Qty + Color side-by-side ----------------------------------- */
+.imprintid-pricing__grid-row {
+  display: grid;
+  grid-template-columns: minmax(10.5rem, 11rem) minmax(0, 1fr);
+  gap: 0.6rem;
+  align-items: start;
+}
+
+/* --- Fields ---------------------------------------------------------------- */
 .imprintid-pricing__field {
   display: flex;
   flex-direction: column;
@@ -56,18 +79,74 @@
   font-size: 0.92em;
 }
 
+/* All inputs and selects share the same control styles */
+.imprintid-pricing__control,
 .imprintid-pricing__field input[type="number"],
 .imprintid-pricing__field select {
   width: 100%;
-  max-width: 14rem;
-  padding: 0.55em 0.65em;
+  min-height: 3.6rem;
+  padding: 0.75rem;
   border: 1px solid var(--imprintid-border);
   border-radius: var(--imprintid-radius);
   font-size: 1em;
   background: transparent;
   color: inherit;
+  transition: border-color 0.15s ease;
 }
 
+.imprintid-pricing__control:focus,
+.imprintid-pricing__field input[type="number"]:focus,
+.imprintid-pricing__field select:focus {
+  border-color: var(--imprintid-btn-primary);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(63, 111, 135, 0.15);
+}
+
+/* Qty placeholder styling */
+.imprintid-pricing__field--qty {
+  margin-bottom: 0;
+}
+
+.imprintid-pricing__field--qty input::placeholder {
+  color: var(--imprintid-muted);
+  opacity: 1;
+}
+
+/* Color field — no bottom margin inside grid-row */
+.imprintid-pricing__field--color {
+  margin-bottom: 0;
+}
+
+/* --- Custom select wrapper with chevron arrow ----------------------------- */
+.imprintid-pricing__select-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.imprintid-pricing__select-wrapper .imprintid-pricing__select,
+.imprintid-pricing__select-wrapper select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 2.5em;
+}
+
+.imprintid-pricing__select-arrow {
+  position: absolute;
+  right: 0.75em;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--imprintid-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- Checkbox fields ------------------------------------------------------ */
 .imprintid-pricing__field--checkbox {
   flex-direction: row;
   align-items: center;
@@ -78,6 +157,7 @@
   font-weight: 400;
 }
 
+/* --- Focus-visible -------------------------------------------------------- */
 .imprintid-pricing__field input:focus-visible,
 .imprintid-pricing__field select:focus-visible,
 .imprintid-pricing__breakdown summary:focus-visible {
@@ -85,6 +165,7 @@
   outline-offset: 2px;
 }
 
+/* --- Fieldsets ------------------------------------------------------------- */
 .imprintid-pricing fieldset {
   border: 1px solid var(--imprintid-border);
   border-radius: var(--imprintid-radius);
@@ -97,18 +178,88 @@
   padding: 0 0.35em;
 }
 
+/* --- Field errors --------------------------------------------------------- */
 .imprintid-pricing__field-error {
   margin: 0;
   color: var(--imprintid-error);
   font-size: 0.85em;
 }
 
+/* --- Options container ---------------------------------------------------- */
 .imprintid-pricing__options {
   display: flex;
   flex-direction: column;
-  gap: 0.85em;
+  gap: 0.6rem;
 }
 
+/* Compact keyboard-accessible dropdown buttons for grouped options. */
+.imprintid-pricing__dropdown {
+  border: 1px solid var(--imprintid-border);
+  border-radius: 6px;
+  background: transparent;
+}
+
+.imprintid-pricing__dropdown summary {
+  position: relative;
+  min-height: 3.6rem;
+  padding: 0.75rem 2.75rem 0.75rem 0.75rem;
+  display: flex;
+  align-items: center;
+  color: var(--imprintid-muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.imprintid-pricing__dropdown summary::-webkit-details-marker {
+  display: none;
+}
+
+.imprintid-pricing__dropdown summary::after {
+  content: "";
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-65%) rotate(45deg);
+  transition: transform 0.15s ease;
+}
+
+.imprintid-pricing__dropdown[open] summary::after {
+  transform: translateY(-35%) rotate(225deg);
+}
+
+.imprintid-pricing__dropdown summary:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+.imprintid-pricing__dropdown-content {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.imprintid-pricing__dropdown-content .imprintid-pricing__field {
+  margin: 0.75rem 0 0;
+}
+
+.imprintid-pricing__main-controls > .imprintid-pricing__options {
+  grid-column: 2;
+}
+
+/* --- Production field ----------------------------------------------------- */
+.imprintid-pricing__field--production {
+  margin-bottom: 0;
+}
+
+.imprintid-pricing__hint {
+  margin: 0.25em 0 0;
+  font-size: 0.85em;
+  color: var(--imprintid-muted);
+}
+
+/* --- Result / pricing display --------------------------------------------- */
 .imprintid-pricing__result {
   border-top: 1px solid var(--imprintid-border);
   padding-top: 1em;
@@ -144,6 +295,7 @@
   letter-spacing: 0.03em;
 }
 
+/* --- Tier table ----------------------------------------------------------- */
 .imprintid-pricing__tier-note {
   margin: 0 0 0.75em;
   font-size: 0.88em;
@@ -174,6 +326,7 @@
   font-weight: 700;
 }
 
+/* --- Breakdown ------------------------------------------------------------ */
 .imprintid-pricing__breakdown summary {
   cursor: pointer;
   font-weight: 600;
@@ -196,6 +349,7 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* --- Error ---------------------------------------------------------------- */
 .imprintid-pricing__error {
   margin: 1em 0 0;
   padding: 0.65em 0.85em;
@@ -205,35 +359,76 @@
   font-size: 0.92em;
 }
 
+/* --- Loading state -------------------------------------------------------- */
 .imprintid-pricing[data-loading="true"] .imprintid-pricing__panel {
   opacity: 0.6;
   pointer-events: none;
 }
 
+/* --- Actions / Button row ------------------------------------------------- */
 .imprintid-pricing__actions {
   margin-top: 1em;
 }
 
-.imprintid-pricing__add-to-cart {
-  width: 100%;
-  padding: 0.75em 1em;
-  border: 1px solid var(--imprintid-muted);
-  border-radius: var(--imprintid-radius);
-  background: var(--imprintid-muted);
-  color: #fff;
+.imprintid-pricing__button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+/* --- Buttons (shared base) ------------------------------------------------ */
+.imprintid-pricing__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.65em 1.25em;
+  border: none;
+  border-radius: 6px;
   font: inherit;
+  font-size: 0.95em;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.imprintid-pricing__btn:active {
+  transform: scale(0.97);
+}
+
+.imprintid-pricing__btn:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+/* Primary button (Add to Cart) */
+.imprintid-pricing__btn--primary {
+  background: var(--imprintid-btn-primary);
+  color: #fff;
+}
+
+.imprintid-pricing__btn--primary:hover:not(:disabled) {
+  background: var(--imprintid-btn-primary-hover);
+}
+
+/* Secondary button (Request Info / Request Quote) */
+.imprintid-pricing__btn--secondary {
+  background: var(--imprintid-btn-secondary);
+  color: #fff;
+}
+
+.imprintid-pricing__btn--secondary:hover:not(:disabled) {
+  background: var(--imprintid-btn-secondary-hover);
+}
+
+/* Legacy add-to-cart class — keep backward compat */
+.imprintid-pricing__add-to-cart {
+  width: auto;
 }
 
 .imprintid-pricing__add-to-cart:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.imprintid-pricing__add-to-cart:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
 }
 
 .imprintid-pricing__add-to-cart[data-state="success"] {
@@ -250,18 +445,129 @@
   margin: 0.5em 0 0;
   font-size: 0.9em;
   color: var(--imprintid-muted);
+}
+
+/* Cancel button inside modals */
+.imprintid-pricing__btn--cancel {
+  background: transparent;
+  color: var(--imprintid-muted);
+  border: 1px solid var(--imprintid-border);
+}
+
+.imprintid-pricing__btn--cancel:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* --- Modal dialog --------------------------------------------------------- */
+.imprintid-pricing__modal {
+  border: none;
+  border-radius: 12px;
+  padding: 0;
+  max-width: 460px;
+  width: 90vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+  background: #fff;
+  color: #1a1a1a;
+}
+
+.imprintid-pricing__modal::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.imprintid-pricing__modal-dialog {
+  display: flex;
+  flex-direction: column;
+}
+
+.imprintid-pricing__modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1em 1.25em;
+  border-bottom: 1px solid var(--imprintid-border);
+}
+
+.imprintid-pricing__modal-header h4 {
+  margin: 0;
+  font-size: 1.05em;
+  font-weight: 700;
+}
+
+.imprintid-pricing__modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5em;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--imprintid-muted);
+  padding: 0 0.25em;
+  transition: color 0.15s ease;
+}
+
+.imprintid-pricing__modal-close:hover {
+  color: #000;
+}
+
+.imprintid-pricing__modal-body {
+  padding: 1.25em;
+  display: flex;
+  flex-direction: column;
+  gap: 1em;
+}
+
+.imprintid-pricing__modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+}
+
+.imprintid-pricing__modal-field label {
+  font-weight: 600;
+  font-size: 0.9em;
+}
+
+.imprintid-pricing__modal-field .imprintid-pricing__input,
+.imprintid-pricing__modal-field .imprintid-pricing__textarea {
+  width: 100%;
+  padding: 0.6em 0.75em;
+  border: 1px solid var(--imprintid-border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.95em;
+  background: #fff;
+  color: inherit;
+  transition: border-color 0.15s ease;
+}
+
+.imprintid-pricing__modal-field .imprintid-pricing__input:focus,
+.imprintid-pricing__modal-field .imprintid-pricing__textarea:focus {
+  border-color: var(--imprintid-btn-primary);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(63, 111, 135, 0.15);
+}
+
+.imprintid-pricing__modal-field .imprintid-pricing__textarea {
+  resize: vertical;
+  min-height: 4em;
+}
+
+.imprintid-pricing__modal-footer {
+  display: flex;
+  gap: 0.5em;
+  padding-top: 0.5em;
+}
+
+.imprintid-pricing__modal-success {
+  margin: 0;
+  padding: 0.65em 0.85em;
+  border-radius: 6px;
+  background: rgba(28, 107, 58, 0.08);
+  color: #1c6b3a;
+  font-size: 0.92em;
   text-align: center;
 }
 
-@media (min-width: 40em) {
-  .imprintid-pricing__field input[type="number"],
-  .imprintid-pricing__field select {
-    max-width: 10rem;
-  }
-}
-
-/* Collapsible "Attachments" box — all ATTACHMENT-kind option groups in one clickable
-   disclosure. Each category is still an independent <select> inside. */
+/* --- Collapsible "Attachments" box ---------------------------------------- */
 .imprintid-pricing__attachments {
   border: 1px solid var(--imprintid-border);
   border-radius: var(--imprintid-radius);
@@ -280,7 +586,7 @@
 }
 
 .imprintid-pricing__attachments > summary::after {
-  content: "▸";
+  content: "\25B8";
   float: right;
   font-weight: 400;
   color: var(--imprintid-muted);
@@ -291,7 +597,7 @@
 }
 
 .imprintid-pricing__attachments[open] > summary::after {
-  content: "▾";
+  content: "\25BE";
 }
 
 .imprintid-pricing__attachments > .imprintid-pricing__field:first-of-type {
@@ -300,4 +606,29 @@
 
 .imprintid-pricing__attachments > .imprintid-pricing__field:last-child {
   padding-bottom: 0.85em;
+}
+
+/* --- Responsive ----------------------------------------------------------- */
+@media (max-width: 30em) {
+  .imprintid-pricing__main-controls {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .imprintid-pricing__grid-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .imprintid-pricing__main-controls > .imprintid-pricing__options {
+    grid-column: auto;
+  }
+
+  .imprintid-pricing__button-row {
+    flex-direction: column;
+  }
+
+  .imprintid-pricing__btn {
+    width: 100%;
+  }
 }

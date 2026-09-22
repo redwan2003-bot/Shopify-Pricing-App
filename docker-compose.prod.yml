@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=${DATABASE_URL}
+      - SHOPIFY_APP_URL=${SHOPIFY_APP_URL}
+      - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
+      - SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET}
+      - SCOPES=write_products,write_cart_transforms,write_validations
+      - IMPRINTID_CART_SIGNING_SECRET=${IMPRINTID_CART_SIGNING_SECRET}
+      - IMPRINTID_ADJUSTMENT_VARIANT_ID=${IMPRINTID_ADJUSTMENT_VARIANT_ID}
+      - IMPRINTID_CART_ENVELOPE_VERSION=2
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

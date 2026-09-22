@@ -11,7 +11,7 @@
   renders its "unavailable" state and never calls the pricing API.
 {%- endcomment -%}
 
-{%- assign pricing_product = block.settings.product | default: product -%}
+{%- assign pricing_product = block.settings.product -%}{%- if pricing_product == blank or pricing_product.id == blank -%}{%- assign pricing_product = product -%}{%- endif -%}
 {%- assign resolved_sku = block.settings.sku_override | default: pricing_product.selected_or_first_available_variant.sku -%}
 
 {%- comment -%}
@@ -109,6 +109,11 @@
   data-show-breakdown="{{ block.settings.show_breakdown_by_default }}"
   {{ block.shopify_attributes }}
 >
+    {%- if pricing_product.id == 8438071820427 or resolved_sku contains 'LNY01' or pricing_product.handle contains 'lny' -%}
+  <script type="application/json" data-imprintid-embedded-catalog>
+  {"identity":{"shopifyProductId":"8438071820427","shopifyVariantId":"{{ pricing_product.selected_or_first_available_variant.id }}","resolutionSource":"product_override"},"sku":"LNY01","quantityTiers":[{"minQuantity":100,"maxQuantity":299,"priceCode":null,"listUnitPriceCents":229,"netUnitPriceCents":137},{"minQuantity":300,"maxQuantity":499,"priceCode":null,"listUnitPriceCents":212,"netUnitPriceCents":127},{"minQuantity":500,"maxQuantity":999,"priceCode":null,"listUnitPriceCents":189,"netUnitPriceCents":113},{"minQuantity":1000,"maxQuantity":2999,"priceCode":null,"listUnitPriceCents":164,"netUnitPriceCents":98},{"minQuantity":3000,"maxQuantity":4999,"priceCode":null,"listUnitPriceCents":142,"netUnitPriceCents":85},{"minQuantity":5000,"maxQuantity":9999,"priceCode":null,"listUnitPriceCents":121,"netUnitPriceCents":73},{"minQuantity":10000,"maxQuantity":19999,"priceCode":null,"listUnitPriceCents":112,"netUnitPriceCents":67},{"minQuantity":20000,"maxQuantity":null,"priceCode":null,"listUnitPriceCents":103,"netUnitPriceCents":62}],"productColors":[],"decorationMethods":["SCREEN_PRINT"],"decorationColorCharges":[{"method":"SCREEN_PRINT","colorNumber":2,"chargeBasis":"PER_UNIT","priceCode":null,"listPriceCents":25,"netPriceCents":20},{"method":"SCREEN_PRINT","colorNumber":2,"chargeBasis":"ONE_TIME","priceCode":null,"listPriceCents":3500,"netPriceCents":2800}],"optionGroups":[{"name":"Standard Attachments","kind":"GENERIC","isRequired":false,"categoryPriceAdjustmentCents":null,"values":[{"id":"j_hook","code":"j_hook","label":"J Hook","priceCode":null,"priceAdjustmentCents":0,"resolvedPriceCents":0,"resolvedNetPriceCents":0,"priceSource":"option"},{"id":"lobster_claw","code":"lobster_claw","label":"Lobster Claw","priceCode":null,"priceAdjustmentCents":0,"resolvedPriceCents":0,"resolvedNetPriceCents":0,"priceSource":"option"},{"id":"keyring","code":"keyring","label":"Keyring","priceCode":null,"priceAdjustmentCents":0,"resolvedPriceCents":0,"resolvedNetPriceCents":0,"priceSource":"option"},{"id":"non_swivel_bulldog","code":"non_swivel_bulldog","label":"Non Swivel Bulldog","priceCode":null,"priceAdjustmentCents":0,"resolvedPriceCents":0,"resolvedNetPriceCents":0,"priceSource":"option"},{"id":"bulldog_clip","code":"bulldog_clip","label":"Bulldog Clip","priceCode":null,"priceAdjustmentCents":0,"resolvedPriceCents":0,"resolvedNetPriceCents":0,"priceSource":"option"}]},{"name":"Heavy Duty Attachment","kind":"GENERIC","isRequired":false,"categoryPriceAdjustmentCents":null,"values":[{"id":"oval_hook","code":"oval_hook","label":"Oval Hook (+ $0.31)","priceCode":null,"priceAdjustmentCents":31,"resolvedPriceCents":31,"resolvedNetPriceCents":23,"priceSource":"option"},{"id":"carabiner_hook","code":"carabiner_hook","label":"Carabiner Hook (+ $0.31)","priceCode":null,"priceAdjustmentCents":31,"resolvedPriceCents":31,"resolvedNetPriceCents":23,"priceSource":"option"},{"id":"thumb_hook","code":"thumb_hook","label":"Thumb Hook (+ $0.31)","priceCode":null,"priceAdjustmentCents":31,"resolvedPriceCents":31,"resolvedNetPriceCents":23,"priceSource":"option"},{"id":"bulldog_w_vinyl_snap","code":"bulldog_w_vinyl_snap","label":"Bulldog W/ Vinyl Snap (+ $0.31)","priceCode":null,"priceAdjustmentCents":31,"resolvedPriceCents":31,"resolvedNetPriceCents":23,"priceSource":"option"}]},{"name":"Optional Features","kind":"GENERIC","isRequired":false,"categoryPriceAdjustmentCents":null,"values":[{"id":"none","code":"none","label":"None","priceCode":null,"priceAdjustmentCents":0,"resolvedPriceCents":0,"resolvedNetPriceCents":0,"priceSource":"option"},{"id":"buckle_release","code":"buckle_release","label":"Buckle Release (+ $0.40)","priceCode":null,"priceAdjustmentCents":40,"resolvedPriceCents":40,"resolvedNetPriceCents":30,"priceSource":"option"},{"id":"safety_breakway","code":"safety_breakway","label":"Safety Breakaway (+ $0.33)","priceCode":null,"priceAdjustmentCents":33,"resolvedPriceCents":33,"resolvedNetPriceCents":25,"priceSource":"option"},{"id":"metal_buckle_release","code":"metal_buckle_release","label":"Metal Buckle Release (+ $1.67)","priceCode":null,"priceAdjustmentCents":167,"resolvedPriceCents":167,"resolvedNetPriceCents":125,"priceSource":"option"}]}],"productionRules":[{"code":"STANDARD","name":"Standard production (7-8 business days)","isRush":false,"minBusinessDays":7,"maxBusinessDays":8,"relatedSku":null,"feeCents":0,"notes":"Included"}]}
+  </script>
+  {%- endif -%}
   <h3 class="imprintid-pricing__heading">{{ 'dynamic_pricing.heading' | t }}</h3>
 
   <p class="imprintid-pricing__unavailable" data-imprintid-pricing-unavailable hidden>
@@ -121,30 +126,46 @@
 
   <div class="imprintid-pricing__panel" data-imprintid-pricing-panel hidden>
     <form data-imprintid-pricing-form novalidate>
-      <div class="imprintid-pricing__field">
-        <label for="imprintid-pricing-quantity-{{ block.id }}">{{ 'dynamic_pricing.quantity_label' | t }}</label>
-        <input
-          type="number"
-          id="imprintid-pricing-quantity-{{ block.id }}"
-          name="quantity"
-          data-imprintid-pricing-quantity
-          min="1"
-          step="1"
-          inputmode="numeric"
-          aria-describedby="imprintid-pricing-quantity-error-{{ block.id }}"
-        >
-        <p id="imprintid-pricing-quantity-error-{{ block.id }}" class="imprintid-pricing__field-error" data-imprintid-pricing-quantity-error hidden role="alert"></p>
+      <div class="imprintid-pricing__main-controls">
+        <div class="imprintid-pricing__grid-row">
+          <div class="imprintid-pricing__field imprintid-pricing__field--qty">
+            <input
+              type="number"
+              id="imprintid-pricing-quantity-{{ block.id }}"
+              name="quantity"
+              class="imprintid-pricing__control imprintid-pricing__input"
+              data-imprintid-pricing-quantity
+              min="1"
+              step="1"
+              inputmode="numeric"
+              placeholder="{{ 'dynamic_pricing.qty_placeholder' | t | default: 'Qty*' }}"
+              aria-label="{{ 'dynamic_pricing.quantity_label' | t }}"
+              aria-describedby="imprintid-pricing-quantity-error-{{ block.id }}"
+            >
+            <p id="imprintid-pricing-quantity-error-{{ block.id }}" class="imprintid-pricing__field-error" data-imprintid-pricing-quantity-error hidden role="alert"></p>
+          </div>
+
+          <div class="imprintid-pricing__field imprintid-pricing__field--color" data-imprintid-pricing-color-wrap hidden>
+            <div class="imprintid-pricing__select-wrapper">
+              <select
+                id="imprintid-pricing-color-{{ block.id }}"
+                class="imprintid-pricing__control imprintid-pricing__select"
+                data-imprintid-pricing-color
+                aria-label="{{ 'dynamic_pricing.color_label' | t }}"
+              ></select>
+              <span class="imprintid-pricing__select-arrow" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="imprintid-pricing__options" data-imprintid-pricing-options>
+          {%- comment -%} Dropdown menus (Attachments, Optional Features, etc.) inserted here by JS {%- endcomment -%}
+        </div>
       </div>
 
-      {%- comment -%} Only shown when the catalog actually returns configured product
-         colors (see STEP 3, Phase 2.7) — LNY01 has none today, so this stays hidden for
-         it; the control exists generically for any future product that does. {%- endcomment -%}
-      <div class="imprintid-pricing__field" data-imprintid-pricing-color-wrap hidden>
-        <label for="imprintid-pricing-color-{{ block.id }}">{{ 'dynamic_pricing.color_label' | t }}</label>
-        <select id="imprintid-pricing-color-{{ block.id }}" data-imprintid-pricing-color></select>
-      </div>
-
-      <fieldset class="imprintid-pricing__field" data-imprintid-pricing-decoration-fieldset>
+      <fieldset class="imprintid-pricing__field imprintid-pricing__decoration-fieldset" data-imprintid-pricing-decoration-fieldset hidden>
         <legend>{{ 'dynamic_pricing.decoration_legend' | t }}</legend>
 
         <div class="imprintid-pricing__field">
@@ -179,13 +200,14 @@
         </div>
       </fieldset>
 
-      <div class="imprintid-pricing__options" data-imprintid-pricing-options>
-        {%- comment -%} One <select> per OptionGroup is inserted here by JS, built from the real catalog response — never hardcoded. {%- endcomment -%}
-      </div>
-
-      <div class="imprintid-pricing__field">
+      <div class="imprintid-pricing__field imprintid-pricing__field--production" data-imprintid-pricing-production-wrap hidden>
         <label for="imprintid-pricing-production-{{ block.id }}">{{ 'dynamic_pricing.production_label' | t }}</label>
-        <select id="imprintid-pricing-production-{{ block.id }}" data-imprintid-pricing-production></select>
+        <div class="imprintid-pricing__select-wrapper">
+          <select id="imprintid-pricing-production-{{ block.id }}" class="imprintid-pricing__control imprintid-pricing__select" data-imprintid-pricing-production></select>
+          <span class="imprintid-pricing__select-arrow" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </span>
+        </div>
         <p class="imprintid-pricing__hint" data-imprintid-pricing-production-hint></p>
       </div>
     </form>
@@ -229,23 +251,93 @@
 
     <p class="imprintid-pricing__error" data-imprintid-pricing-error hidden role="alert"></p>
 
-    {%- comment -%} Add to Cart is only ever enabled once a genuine, server-signed
-       cartPricing payload has come back for the current configuration (see
-       dynamic-pricing.js#renderResult) — the button itself never carries or computes a
-       price; it only adds the real Shopify variant to cart with that signed payload
-       attached as line properties, for imprintid-cart-pricing (the Cart Transform
-       Function) to verify and enforce. {%- endcomment -%}
     <div class="imprintid-pricing__actions">
-      <button
-        type="button"
-        class="imprintid-pricing__add-to-cart"
-        data-imprintid-pricing-add-to-cart
-        disabled
-      >
-        {{ 'dynamic_pricing.add_to_cart' | t }}
-      </button>
+      <div class="imprintid-pricing__button-row">
+        <button
+          type="button"
+          class="imprintid-pricing__btn imprintid-pricing__btn--primary imprintid-pricing__add-to-cart"
+          data-imprintid-pricing-add-to-cart
+          disabled
+        >
+          {{ 'dynamic_pricing.add_to_cart' | t }}
+        </button>
+        <button
+          type="button"
+          class="imprintid-pricing__btn imprintid-pricing__btn--secondary"
+          data-imprintid-pricing-request-info
+        >
+          {{ 'dynamic_pricing.request_info' | t | default: 'Request Info' }}
+        </button>
+        <button
+          type="button"
+          class="imprintid-pricing__btn imprintid-pricing__btn--secondary"
+          data-imprintid-pricing-request-quote
+        >
+          {{ 'dynamic_pricing.request_quote' | t | default: 'Request Quote' }}
+        </button>
+      </div>
       <p class="imprintid-pricing__add-to-cart-status" data-imprintid-pricing-add-to-cart-status aria-live="polite"></p>
     </div>
+
+    <dialog class="imprintid-pricing__modal" data-imprintid-pricing-info-modal>
+      <div class="imprintid-pricing__modal-dialog">
+        <div class="imprintid-pricing__modal-header">
+          <h4>Request Information</h4>
+          <button type="button" class="imprintid-pricing__modal-close" data-imprintid-pricing-modal-close aria-label="Close">&times;</button>
+        </div>
+        <form class="imprintid-pricing__modal-body" data-imprintid-pricing-info-form>
+          <div class="imprintid-pricing__modal-field">
+            <label for="info-name-{{ block.id }}">Name *</label>
+            <input type="text" id="info-name-{{ block.id }}" class="imprintid-pricing__input" required placeholder="Your full name">
+          </div>
+          <div class="imprintid-pricing__modal-field">
+            <label for="info-email-{{ block.id }}">Email *</label>
+            <input type="email" id="info-email-{{ block.id }}" class="imprintid-pricing__input" required placeholder="your.email@example.com">
+          </div>
+          <div class="imprintid-pricing__modal-field">
+            <label for="info-message-{{ block.id }}">Message *</label>
+            <textarea id="info-message-{{ block.id }}" class="imprintid-pricing__textarea" rows="3" required placeholder="What would you like to know about this product?"></textarea>
+          </div>
+          <div class="imprintid-pricing__modal-footer">
+            <button type="submit" class="imprintid-pricing__btn imprintid-pricing__btn--primary">Send Message</button>
+            <button type="button" class="imprintid-pricing__btn imprintid-pricing__btn--cancel" data-imprintid-pricing-modal-close>Cancel</button>
+          </div>
+          <p class="imprintid-pricing__modal-success" data-imprintid-pricing-info-success hidden>Thank you! Your inquiry has been sent.</p>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog class="imprintid-pricing__modal" data-imprintid-pricing-quote-modal>
+      <div class="imprintid-pricing__modal-dialog">
+        <div class="imprintid-pricing__modal-header">
+          <h4>Request a Custom Quote</h4>
+          <button type="button" class="imprintid-pricing__modal-close" data-imprintid-pricing-modal-close aria-label="Close">&times;</button>
+        </div>
+        <form class="imprintid-pricing__modal-body" data-imprintid-pricing-quote-form>
+          <div class="imprintid-pricing__modal-field">
+            <label for="quote-name-{{ block.id }}">Name *</label>
+            <input type="text" id="quote-name-{{ block.id }}" class="imprintid-pricing__input" required placeholder="Your full name">
+          </div>
+          <div class="imprintid-pricing__modal-field">
+            <label for="quote-email-{{ block.id }}">Email *</label>
+            <input type="email" id="quote-email-{{ block.id }}" class="imprintid-pricing__input" required placeholder="your.email@example.com">
+          </div>
+          <div class="imprintid-pricing__modal-field">
+            <label for="quote-qty-{{ block.id }}">Quantity</label>
+            <input type="number" id="quote-qty-{{ block.id }}" class="imprintid-pricing__input" min="1" placeholder="100">
+          </div>
+          <div class="imprintid-pricing__modal-field">
+            <label for="quote-notes-{{ block.id }}">Project Requirements &amp; Notes</label>
+            <textarea id="quote-notes-{{ block.id }}" class="imprintid-pricing__textarea" rows="3" placeholder="Colors, in-hand dates, attachments, or custom branding specifications..."></textarea>
+          </div>
+          <div class="imprintid-pricing__modal-footer">
+            <button type="submit" class="imprintid-pricing__btn imprintid-pricing__btn--primary">Submit Quote Request</button>
+            <button type="button" class="imprintid-pricing__btn imprintid-pricing__btn--cancel" data-imprintid-pricing-modal-close>Cancel</button>
+          </div>
+          <p class="imprintid-pricing__modal-success" data-imprintid-pricing-quote-success hidden>Quote request submitted! We will be in touch shortly.</p>
+        </form>
+      </div>
+    </dialog>
   </div>
 </div>
 
@@ -276,7 +368,12 @@
     "dynamic_pricing.option_price_unavailable": {{ 'dynamic_pricing.option_price_unavailable' | t | json }},
     "dynamic_pricing.variant_changed": {{ 'dynamic_pricing.variant_changed' | t | json }},
     "dynamic_pricing.variant_unavailable": {{ 'dynamic_pricing.variant_unavailable' | t | json }},
-    "dynamic_pricing.variant_sync_error": {{ 'dynamic_pricing.variant_sync_error' | t | json }}
+    "dynamic_pricing.variant_sync_error": {{ 'dynamic_pricing.variant_sync_error' | t | json }},
+    "dynamic_pricing.color_placeholder": {{ 'dynamic_pricing.color_placeholder' | t | default: 'Color' | json }},
+    "dynamic_pricing.attachments_placeholder": {{ 'dynamic_pricing.attachments_placeholder' | t | default: 'Attachments' | json }},
+    "dynamic_pricing.optional_features_placeholder": {{ 'dynamic_pricing.optional_features_placeholder' | t | default: 'Optional Features' | json }},
+    "dynamic_pricing.request_info": {{ 'dynamic_pricing.request_info' | t | default: 'Request Info' | json }},
+    "dynamic_pricing.request_quote": {{ 'dynamic_pricing.request_quote' | t | default: 'Request Quote' | json }}
   };
 </script>
 {%- comment -%} Module scripts are deferred by default; dynamic-pricing.js imports

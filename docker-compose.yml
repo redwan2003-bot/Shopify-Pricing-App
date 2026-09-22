@@ -1,0 +1,44 @@
+version: "3.8"
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/imprintid_pricing?schema=public
+      - SHOPIFY_APP_URL=${SHOPIFY_APP_URL:-http://localhost:3000}
+      - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
+      - SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET}
+      - SCOPES=write_products,write_cart_transforms,write_validations
+      - IMPRINTID_CART_SIGNING_SECRET=${IMPRINTID_CART_SIGNING_SECRET}
+      - IMPRINTID_ADJUSTMENT_VARIANT_ID=${IMPRINTID_ADJUSTMENT_VARIANT_ID}
+      - IMPRINTID_CART_ENVELOPE_VERSION=2
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: imprintid_pricing
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d imprintid_pricing"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

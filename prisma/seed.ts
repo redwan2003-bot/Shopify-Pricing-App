@@ -8,7 +8,8 @@ import { buildLny01PricingInput } from "./seed-data/lny01.ts";
  * every pricing record is still stored against a normal Store row keyed by whatever
  * shopDomain is passed in.
  */
-const DEFAULT_DEV_SHOP_DOMAIN = "imprintid-pricing-development.myshopify.com";
+const DEFAULT_DEV_SHOP_DOMAIN = "imprintid-pricing-dev.myshopify.com";
+const DEFAULT_LNY01_PRODUCT_ID = "8438071820427";
 
 async function main() {
   const shopDomain = process.env.SEED_SHOP_DOMAIN?.trim() || DEFAULT_DEV_SHOP_DOMAIN;
@@ -18,6 +19,27 @@ async function main() {
     console.log(`Seeding pricing data for shop: ${shopDomain}`);
 
     const result = await importPricingProfile(prisma, buildLny01PricingInput(shopDomain));
+
+    // Keep the local seed self-contained so the development storefront and
+    // integration tests exercise the product-override resolution path.
+    await prisma.productPricingOverride.upsert({
+      where: {
+        storeId_shopifyProductId: {
+          storeId: result.storeId,
+          shopifyProductId: DEFAULT_LNY01_PRODUCT_ID,
+        },
+      },
+      update: {
+        pricingProfileId: result.pricingProfileId,
+        isActive: true,
+      },
+      create: {
+        storeId: result.storeId,
+        shopifyProductId: DEFAULT_LNY01_PRODUCT_ID,
+        pricingProfileId: result.pricingProfileId,
+        isActive: true,
+      },
+    });
 
     console.log("\nLNY01 pricing import complete:");
     console.log(`  Store:            ${result.shopDomain} (${result.storeId})`);

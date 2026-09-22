@@ -1,0 +1,678 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// --- Dynamic pricing (Phase 2.1) ---
+// All money fields are integer cents to avoid floating-point rounding errors.
+
+// One row per installed shop. Anchors every pricing record to a tenant.
+model Store {
+  id           String   @id @default(cuid())
+  shopDomain   String   @unique
+  // The shop's authoritative primary currency (Admin `shop.currencyCode`), refreshed on
+  // every catalog synchronization. Used by the bulk-assignment currency gate (Task 6A):
+  // an assignment is only "enforcement-ready" when the pricing profile currency equals
+  // this. `null` until the first sync.
+  shopCurrency String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  pricingProfiles         PricingProfile[]
+  productPricingOverrides ProductPricingOverride[]
+  catalogProducts         CatalogProduct[]
+  catalogVariants         CatalogVariant[]
+  catalogSyncJobs         CatalogSyncJob[]
+  bulkAssignmentJobs      BulkAssignmentJob[]
+  bulkAssignmentItems     BulkAssignmentItem[]
+  bulkAssignmentAudits    BulkAssignmentAudit[]
+  webhookEvents           WebhookEvent[]
+}
+
+// A named pricing strategy (e.g. "Standard", "Wholesale") a store can apply to products.
+// `sku` identifies a profile that belongs to one specific product (e.g. "LNY01") before
+// that product has a known Shopify product ID — see ProductPricingOverride for the
+// eventual Shopify-side link. Nullable because non-product-specific profiles (e.g. a
+// general "Wholesale" strategy applied via ProductPricingOverride) may not have one SKU.
+model PricingProfile {
+  id             String   @id @default(cuid())
+  storeId        String
+  store          Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  sku            String?
+  name           String
+  description    String?
+  isDefault      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  basePriceCents Int      @default(0)
+  currency       String   @default("USD")
+  // Monotonic revision, bumped whenever the profile's pricing-relevant data changes.
+  // Task 6A: the bulk-assignment dry-run captures this value; `--apply` refuses if it
+  // has since changed. Also written into the app-owned `$app:imprintid/pricing_policy`
+  // metafield as `profileRevision` so the Cart Transform / Validation Functions can
+  // reject a stale signed quote.
+  //
+  // Task 6A.1: `revision` alone cannot be trusted, because pricing-affecting data lives
+  // in eight child tables that can be written without touching this row. `contentDigest`
+  // is a deterministic SHA-256 over the FULL pricing-output projection (the same
+  // projection `repository.ts#toPricingProfileData` feeds the calculator, plus currency /
+  // basePriceCents / isActive). `syncPricingProfileRevision` (app/lib/pricing/revision.ts)
+  // recomputes it inside the same transaction as any pricing write and bumps `revision`
+  // only when the digest actually changed — so a no-op save never bumps it, and no
+  // child-table write can slip past it.
+  revision       Int      @default(1)
+  contentDigest  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  quantityTiers          QuantityTier[]
+  decorationRules        DecorationRule[]
+  decorationColorCharges DecorationColorCharge[]
+  optionGroups           OptionGroup[]
+  productColors          ProductColor[]
+  productionRules        ProductionRule[]
+  packagingRules         PackagingRule[]
+  productOverrides       ProductPricingOverride[]
+  catalogProducts        CatalogProduct[]
+  bulkAssignmentJobs     BulkAssignmentJob[]
+
+  @@unique([storeId, name])
+  @@unique([storeId, sku])
+  @@index([storeId])
+}
+
+// Quantity break. List and net price are both kept — the calculation engine (a later
+// phase) decides which one a given customer/channel sees. Neither is derived from the
+// other; both are supplied tier prices. `priceCode` (Phase 2.7) is optional vendor
+// price-sheet metadata (e.g. a Sage-style price-grid column reference) — display-only,
+// never consumed by the calculation engine, never a substitute for the cent fields.
+model QuantityTier {
+  id               String         @id @default(cuid())
+  pricingProfileId String
+  pricingProfile   PricingProfile @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  minQuantity      Int
+  maxQuantity      Int?
+  priceCode        String?
+  listPriceCents   Int
+  netPriceCents    Int
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([pricingProfileId, minQuantity])
+  @@index([pricingProfileId])
+}
+
+enum DecorationMethod {
+  SCREEN_PRINT
+  EMBROIDERY
+  DTF
+  DTG
+  VINYL
+  SUBLIMATION
+  WOVEN
+  OTHER
+}
+
+// Whether a decoration charge applies once per order/configuration, or per produced unit.
+enum DecorationChargeBasis {
+  ONE_TIME
+  PER_UNIT
+}
+
+// One structured decoration charge (e.g. "setup, one color one location" or "additional
+// color run charge"). Each distinct charge for a decoration method is its own row —
+// charges are never merged into a single generic fee, so the calculation engine can apply
+// only the ones that actually apply to a given order configuration. `code` is a stable
+// per-profile identifier (e.g. "SETUP_1C1L") used for idempotent import.
+model DecorationRule {
+  id               String                @id @default(cuid())
+  pricingProfileId String
+  pricingProfile   PricingProfile        @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  method           DecorationMethod
+  code             String
+  name             String
+  chargeBasis      DecorationChargeBasis
+  priceCode        String?
+  listPriceCents   Int
+  netPriceCents    Int
+  sortOrder        Int                   @default(0)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@unique([pricingProfileId, code])
+  @@index([pricingProfileId])
+}
+
+// One structured charge for the Nth decoration color (colorNumber >= 2 — the first
+// color is always covered by the base setup, e.g. SETUP_1C1L). Phase 2.7: replaces the
+// old binary "colors > 1" gate (see calculator.ts) with an explicit per-color-number
+// table, so a profile can price color 2, color 3, color 4, ... independently instead of
+// treating "any additional color" as one flat charge. `chargeBasis` reuses the same
+// enum DecorationRule uses (ONE_TIME = once per order, PER_UNIT = once per produced
+// unit) — deliberately not a new enum, since the semantics are identical. A method/color
+// combination may have both a ONE_TIME (setup) and a PER_UNIT (run) row.
+model DecorationColorCharge {
+  id               String                @id @default(cuid())
+  pricingProfileId String
+  pricingProfile   PricingProfile        @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  method           DecorationMethod
+  colorNumber      Int
+  chargeBasis      DecorationChargeBasis
+  priceCode        String?
+  listPriceCents   Int
+  netPriceCents    Int
+  isActive         Boolean               @default(true)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@unique([pricingProfileId, method, colorNumber, chargeBasis])
+  @@index([pricingProfileId])
+}
+
+// What an OptionGroup semantically represents. Phase 2.7: lets the catalog API (and any
+// future UI) distinguish an Attachment group from a generic Feature group by a real
+// field instead of matching on `name` text (which is merchant-editable, human-facing
+// copy, and was never meant to be a machine-readable type discriminator). Existing
+// groups default to GENERIC on migration — nothing about how they're priced or selected
+// changes; `kind` is metadata only, read by the catalog projection, never by the
+// calculation engine (attachments are still priced exactly as any OptionGroup is).
+enum OptionGroupKind {
+  GENERIC
+  ATTACHMENT
+  FEATURE
+}
+
+// A named group of customer-selectable options (e.g. "Attachment Style").
+// `categoryPriceAdjustmentCents` optionally represents a category-level surcharge (e.g.
+// "Heavy Duty +$0.23") for source data that gives a price per category rather than per
+// individual option value — see OptionValue for the option-level equivalent.
+model OptionGroup {
+  id                           String          @id @default(cuid())
+  pricingProfileId             String
+  pricingProfile               PricingProfile  @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  name                         String
+  kind                         OptionGroupKind @default(GENERIC)
+  isRequired                   Boolean         @default(false)
+  sortOrder                    Int             @default(0)
+  categoryPriceAdjustmentCents Int?
+  createdAt                    DateTime        @default(now())
+  updatedAt                    DateTime        @updatedAt
+
+  optionValues OptionValue[]
+
+  @@unique([pricingProfileId, name])
+  @@index([pricingProfileId])
+}
+
+// One selectable value within an OptionGroup. `priceAdjustmentCents` is nullable with no
+// default: null means "no price was supplied for this option" and must not be treated as
+// $0; an explicit 0 means the option is confirmed to add no cost. `code` preserves the
+// source catalog code (e.g. "SA03") when one was given; it is not unique, since the
+// supplied catalog itself reuses codes across distinct labeled items. `priceCode`
+// (Phase 2.7) is separate, optional vendor price-sheet metadata — display-only.
+model OptionValue {
+  id                   String      @id @default(cuid())
+  optionGroupId        String
+  optionGroup          OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+  code                 String?
+  label                String
+  priceCode            String?
+  priceAdjustmentCents Int?
+  // Net (actually-charged) price adjustment, when the source data supplies one
+  // separately from `priceAdjustmentCents` (list). Additive, nullable, same
+  // null-means-"not supplied" convention as the rest of this schema: null does NOT
+  // mean "same as list", it means the source never gave a net figure, and the
+  // calculator falls back to `priceAdjustmentCents` for both totals — exactly how
+  // every option priced before this column existed continues to behave unchanged.
+  netPriceAdjustmentCents Int?
+  isDefault            Boolean     @default(false)
+  sortOrder            Int         @default(0)
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@unique([optionGroupId, label])
+  @@index([optionGroupId])
+}
+
+// A selectable product color — a first-class configuration dimension (Phase 2.7),
+// distinct from OptionGroup/OptionValue: colors are a near-universal physical-product
+// dimension with their own identity (a stable `code`), not an arbitrary merchant-named
+// group. Kept intentionally minimal — no hex/visual-swatch metadata, since nothing in
+// the current source data or UI consumes one yet; add it later as an additive nullable
+// column if a real need appears. `priceAdjustmentCents` follows the same
+// null-means-not-supplied convention as OptionValue: null is not $0.
+model ProductColor {
+  id                   String         @id @default(cuid())
+  pricingProfileId     String
+  pricingProfile       PricingProfile @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  code                 String
+  name                 String
+  priceCode            String?
+  priceAdjustmentCents Int?
+  sortOrder            Int            @default(0)
+  isActive             Boolean        @default(true)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  @@unique([pricingProfileId, code])
+  @@index([pricingProfileId])
+}
+
+enum ProductionFeeType {
+  FLAT
+  PERCENTAGE
+  PER_UNIT
+}
+
+// A production/turnaround option (e.g. standard vs. rush). `code` is a stable per-profile
+// identifier used for idempotent import (e.g. "STANDARD", "RUSH"). `feeCents` is nullable:
+// null means no surcharge was supplied for this option, not that it is free.
+model ProductionRule {
+  id               String            @id @default(cuid())
+  pricingProfileId String
+  pricingProfile   PricingProfile    @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  code             String
+  name             String
+  isRush           Boolean           @default(false)
+  minBusinessDays  Int
+  maxBusinessDays  Int?
+  relatedSku       String?
+  feeCents         Int?
+  feeType          ProductionFeeType @default(FLAT)
+  notes            String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([pricingProfileId, code])
+  @@index([pricingProfileId])
+}
+
+// Physical packaging/carton information for a product. This phase stores dimensional data
+// only — no shipping rate is calculated from it. `code` is a stable per-profile identifier
+// used for idempotent import (e.g. "STANDARD_CARTON"). `feeCents` is nullable: null means
+// no packaging fee was supplied, not that packaging is free.
+model PackagingRule {
+  id               String         @id @default(cuid())
+  pricingProfileId String
+  pricingProfile   PricingProfile @relation(fields: [pricingProfileId], references: [id], onDelete: Cascade)
+  code             String
+  name             String
+  unitsPerPackage  Int?
+  cartonWeightLbs  Float?
+  lengthIn         Float?
+  widthIn          Float?
+  heightIn         Float?
+  feeCents         Int?
+  notes            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([pricingProfileId, code])
+  @@index([pricingProfileId])
+}
+
+// Per-product pricing override: pins a specific Shopify product to a profile
+// and/or a fixed base price, without touching the product itself in Shopify.
+model ProductPricingOverride {
+  id               String          @id @default(cuid())
+  storeId          String
+  store            Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shopifyProductId String
+  pricingProfileId String?
+  pricingProfile   PricingProfile? @relation(fields: [pricingProfileId], references: [id], onDelete: SetNull)
+  basePriceCents   Int?
+  isActive         Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([storeId, shopifyProductId])
+  @@index([storeId])
+  @@index([pricingProfileId])
+}
+
+// ===========================================================================
+// Task 6A - Universal catalog management + bulk pricing-profile assignment.
+//
+// EVERY model here is anchored to storeId and every unique constraint is
+// [storeId, ...], so no query can cross a tenant boundary (see app/lib/catalog/*
+// - the store is always resolved from the authenticated session, never a
+// submitted domain). Nothing here touches Shopify titles, descriptions, images,
+// SKUs, native prices, inventory, publications, collections or tags - only the
+// app-owned $app:imprintid/pricing_policy product metafield and the local
+// ProductPricingOverride.
+// ===========================================================================
+
+// A synchronized snapshot of one Shopify catalog product - only the fields
+// pricing administration needs. Refreshed by CatalogSyncJob (bulk query) and by
+// products/* webhooks.
+model CatalogProduct {
+  id               String @id @default(cuid())
+  storeId          String
+  store            Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shopifyProductId String // canonical GID gid://shopify/Product/<id>
+
+  title            String
+  handle           String
+  status           String // ACTIVE | ARCHIVED | DRAFT (Shopify ProductStatus, verbatim)
+  vendor           String?
+  productType      String?
+  tags             String    @default("") // comma-joined lowercased, for LIKE filtering
+  variantCount     Int       @default(0)
+  // Task 6A.1: kept as a cheap denormalized flag ONLY. Exact SKU search goes through
+  // the CatalogVariant child table below — `hasAnySku` is never a search boundary.
+  hasAnySku        Boolean   @default(false)
+  shopifyUpdatedAt DateTime?
+
+  // Denormalized pricing-coverage state, recomputed by reconcileCatalogCoverage
+  // after every sync / assignment / rollback. Never authoritative.
+  assignedProfileId String?
+  assignedProfile   PricingProfile? @relation(fields: [assignedProfileId], references: [id], onDelete: SetNull)
+  assignmentSource  String? // bulk | manual | override
+  policySyncedAt    DateTime? // when this app last wrote pricing_policy for this product
+  // Task 6A.1: the Shopify `compareDigest` of the app-owned pricing_policy metafield as
+  // this app last observed it. Feeds the strong catalog fingerprint and lets a dry run
+  // detect a policy that changed underneath us without re-reading Shopify per product.
+  policyDigest      String?
+  coverageStatus    String          @default("unassigned") // unassigned | assigned | inactive_profile | invalid
+  enforcementReady  Boolean         @default(false)
+
+  firstSeenAt          DateTime  @default(now())
+  lastSeenAt           DateTime  @default(now())
+  lastSeenSyncId       String?
+  removedFromShopifyAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  variants        CatalogVariant[]
+  assignmentItems BulkAssignmentItem[]
+
+  @@unique([storeId, shopifyProductId])
+  @@index([storeId])
+  @@index([storeId, coverageStatus])
+  @@index([storeId, assignedProfileId])
+  @@index([storeId, status])
+  @@index([storeId, vendor])
+  @@index([storeId, productType])
+  @@index([assignedProfileId])
+}
+
+// One store-scoped variant of a synchronized catalog product.
+//
+// Task 6A.1: replaces the `hasAnySku` approximation. The full-catalog bulk query pulls
+// EVERY variant through the nested bulk-operation connection (JSONL `__parentId`), with
+// no `first: N` completeness boundary, so an exact-SKU search is exact regardless of how
+// many variants a product has.
+model CatalogVariant {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  catalogProductId String
+  catalogProduct   CatalogProduct @relation(fields: [catalogProductId], references: [id], onDelete: Cascade)
+
+  shopifyVariantId String // canonical GID gid://shopify/ProductVariant/<id>
+  shopifyProductId String // denormalized parent GID — lets a SKU search stay one query
+  title            String @default("")
+  sku              String? // null = Shopify has no SKU for this variant
+  position         Int     @default(0)
+  shopifyUpdatedAt DateTime?
+
+  lastSeenSyncId       String?
+  removedFromShopifyAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storeId, shopifyVariantId])
+  @@index([storeId])
+  @@index([storeId, sku])
+  @@index([catalogProductId])
+  @@index([storeId, shopifyProductId])
+}
+
+// A full-catalog synchronization run.
+model CatalogSyncJob {
+  id      String @id @default(cuid())
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  storeId String
+
+  // queued | running | awaiting_bulk | ingesting | completed | partial | failed | superseded
+  status         String @default("queued")
+  idempotencyKey String
+
+  // Task 6A.1: the EXACT BulkOperation this job owns. Polling uses
+  // `bulkOperation(id: $id)` and asserts the returned id equals this value — never
+  // `currentBulkOperation`, which can belong to an unrelated (or another app's) run.
+  bulkOperationId       String?
+  bulkOperationStatus   String?
+  bulkOperationObjects  Int     @default(0)
+  resultUrl             String?
+  resumeByteOffset      Int     @default(0)
+  resumeLastObjectId    String?
+
+  objectsSeen      Int @default(0)
+  productsUpserted Int @default(0)
+  productsRemoved  Int @default(0)
+  variantsSeen     Int @default(0)
+  variantsUpserted Int @default(0)
+  variantsRemoved  Int @default(0)
+
+  // Expiring worker lease — a bounded request claims the job, renews while it works,
+  // and a crashed worker's lease expires so the job is recoverable.
+  leaseToken     String?
+  leaseExpiresAt DateTime?
+
+  // At most ONE app-owned catalog synchronization may be non-terminal per shop: an active
+  // job carries the literal "active", a terminal job carries NULL. SQLite/Postgres treat
+  // NULLs as distinct in a unique index, so `@@unique([storeId, activeSentinel])` admits
+  // unlimited terminal rows but exactly one active row — a portable substitute for a
+  // partial unique index, enforced by the database rather than by application checks.
+  activeSentinel String?
+
+  errorCode    String?
+  errorMessage String?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([storeId, idempotencyKey])
+  @@unique([storeId, activeSentinel])
+  @@index([storeId])
+  @@index([storeId, status])
+  @@index([bulkOperationId])
+}
+
+// A bulk pricing-profile assignment (or a rollback of one).
+model BulkAssignmentJob {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  jobType        String @default("assign") // assign | rollback
+  // dry_run -> materializing -> queued -> running -> (paused) -> completed | partial | failed
+  // rollback jobs: queued -> running -> rolled_back | partial | failed ; any -> cancelled
+  status         String @default("queued")
+  idempotencyKey String
+
+  // Task 6A.1 data-minimization: only the opaque Shopify staff-user id is retained, for
+  // "who started this job" in the audit trail. Staff EMAIL is deliberately NOT stored —
+  // it is unnecessary personal data for an internal pricing job, so `createdByEmail` was
+  // removed. The id is dropped with the job when the store row is deleted (uninstall).
+  createdByUserId String?
+
+  pricingProfileId String?
+  pricingProfile   PricingProfile? @relation(fields: [pricingProfileId], references: [id], onDelete: SetNull)
+  profileRevision  Int?
+  // Task 6A.1: the pricing-content digest captured at dry-run time. Any pricing-affecting
+  // child-table change flips this even when `profileRevision` would look unchanged.
+  profileDigest    String?
+  profileCurrency  String?
+  replaceExisting  Boolean         @default(false)
+
+  selectionKind       String
+  selectionDescriptor String // JSON
+  catalogFingerprint  String?
+  dryRunFingerprint   String?
+  dryRunIssuedAt      DateTime?
+  dryRunExpiresAt     DateTime?
+
+  totalItems Int @default(0)
+  succeeded  Int @default(0)
+  unchanged  Int @default(0)
+  skipped    Int @default(0)
+  failed     Int @default(0)
+
+  // Expiring job-level lease (Task 6A.1). A bounded Admin request claims the job with a
+  // unique token, renews `leaseExpiresAt` while it works, and releases on exit. A crashed
+  // worker's lease simply expires. Terminal jobs are never re-leased.
+  workerToken     String?
+  workerClaimedAt DateTime?
+  leaseExpiresAt  DateTime?
+
+  errorCode    String?
+  errorMessage String?
+
+  rollbackOfJobId String?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  items  BulkAssignmentItem[]
+  audits BulkAssignmentAudit[]
+
+  @@unique([storeId, idempotencyKey])
+  @@index([storeId])
+  @@index([storeId, status])
+  @@index([storeId, jobType])
+}
+
+// One product within a bulk-assignment job. Carries enough previous state to
+// restore the app-owned override + pricing-policy metafield exactly.
+model BulkAssignmentItem {
+  id      String            @id @default(cuid())
+  storeId String
+  store   Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  jobId   String
+  job     BulkAssignmentJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  shopifyProductId String
+  catalogProductId String?
+  catalogProduct   CatalogProduct? @relation(fields: [catalogProductId], references: [id], onDelete: SetNull)
+
+  // pending | claimed | overrideWritten | succeeded | unchanged | skipped | failed | rolled_back
+  status String @default("pending")
+
+  attemptCount  Int       @default(0)
+  claimedBy     String?
+  claimedAt     DateTime?
+  // Per-item lease expiry — an item claimed by a worker that died becomes claimable
+  // again only after this passes (Task 6A.1).
+  leaseExpiresAt DateTime?
+  nextAttemptAt DateTime?
+
+  // Previous state (rollback snapshot).
+  prevOverrideExisted   Boolean  @default(false)
+  prevOverrideProfileId String?
+  prevOverrideBaseCents Int?
+  prevOverrideActive    Boolean?
+  prevPolicyJson        String? // "" = absent
+  // Task 6A.1 compare-and-set state. `prevPolicyPresent` distinguishes "no metafield"
+  // (compareDigest must be sent as null) from "not yet captured" (null column).
+  // `prevPolicyDigest` is Shopify's `compareDigest` for the value we read before writing;
+  // `postPolicyDigest` is the digest Shopify returned for the value WE wrote — rollback
+  // compares against it so a third-party change since our write is a hard conflict.
+  prevPolicyPresent     Boolean?
+  prevPolicyDigest      String?
+  prevPolicyMetafieldId String?
+  postPolicyDigest      String?
+
+  // Desired state.
+  newProfileId  String
+  newPolicyJson String
+
+  // Partial-completion markers.
+  overrideWritten Boolean @default(false)
+  policyWritten   Boolean @default(false)
+
+  idempotencyKey String
+
+  errorCode    String?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([jobId, shopifyProductId])
+  @@index([storeId])
+  @@index([jobId, status])
+  @@index([jobId, status, nextAttemptAt])
+  // Without this, the `catalogProductId` ON DELETE SET NULL back-reference forces a full
+  // BulkAssignmentItem scan per deleted CatalogProduct (quadratic on a store teardown).
+  @@index([catalogProductId])
+}
+
+// Job-level audit trail.
+model BulkAssignmentAudit {
+  id      String            @id @default(cuid())
+  storeId String
+  store   Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  jobId   String
+  job     BulkAssignmentJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  event  String
+  detail String   @default("{}") // JSON - never a token, signature, or full webhook payload
+  at     DateTime @default(now())
+
+  @@index([storeId])
+  @@index([jobId])
+}
+
+// Idempotent webhook-delivery ledger - dedupes retried Shopify deliveries by
+// X-Shopify-Webhook-Id, scoped per shop.
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  webhookId   String // X-Shopify-Webhook-Id
+  topic       String
+  shopDomain  String
+  processedAt DateTime @default(now())
+
+  @@unique([storeId, webhookId])
+  @@index([storeId])
+  @@index([processedAt])
+}

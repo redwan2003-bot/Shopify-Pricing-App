@@ -139,6 +139,9 @@ function parseCsv(text: string): string[][] {
 }
 
 function loadCsvRecords(path: string): Record<string, string>[] {
+  // The source export may begin with a UTF-8 BOM; the literal sequence below is
+  // retained for compatibility with older exports.
+  // eslint-disable-next-line no-irregular-whitespace
   const raw = readFileSync(path, "utf8").replace(/^﻿/, "");
   const table = parseCsv(raw);
   const header = table[0]!;
@@ -160,10 +163,35 @@ interface HoldBack {
   reason: string;
 }
 
+interface SourceCharge {
+  id: string;
+  label: string;
+  chargeType: string;
+  listPriceCents: number;
+  netPriceCents: number;
+}
+
+interface SourceDecorationGroup { id: string; method: string; charges?: SourceCharge[]; }
+interface SourceOption { id?: string; name: string; includedInBasePrice?: boolean; listPriceAdjustmentCents?: number | null; netPriceAdjustmentCents?: number | null; }
+interface SourceOptionGroup { name: string; options?: SourceOption[]; }
+interface SourceQuantityBreak { minQuantity: number; maxQuantity?: number | null; listPriceCents: number; netPriceCents: number; }
+interface SourceProductionRule { id: string; name: string; mode: string; leadTimeMinBusinessDays: number; leadTimeMaxBusinessDays?: number | null; priceAdjustmentCents?: number | null; pricingNote?: string | null; sourceText?: string | null; }
+interface SourcePackagingRule { id: string; name: string; unitsPerCarton?: number | null; cartonWeightLbs?: number | null; cartonLengthInches?: number | null; cartonWidthInches?: number | null; cartonHeightInches?: number | null; source?: string | null; cartonMappingIds?: string[]; }
+interface SourceProfile {
+  sku?: string;
+  syncStatus?: string;
+  currency?: string;
+  quantityBreaks?: SourceQuantityBreak[];
+  decorationRules?: SourceDecorationGroup[];
+  optionGroups?: SourceOptionGroup[];
+  productionRules?: SourceProductionRule[];
+  packagingRules?: SourcePackagingRule[];
+}
+
 function transformProfile(
   shopDomain: string,
   title: string,
-  profile: any,
+  profile: SourceProfile,
 ): { input: PricingProfileImportInput } | { error: string } {
   const sku = profile.sku;
   if (typeof sku !== "string" || sku.trim().length === 0) {
@@ -231,12 +259,12 @@ function transformProfile(
   }
 
   const optionGroups: OptionGroupInput[] = (Array.isArray(profile.optionGroups) ? profile.optionGroups : []).map(
-    (group: any, groupIndex: number) => ({
+    (group, groupIndex) => ({
       name: group.name,
       kind: OptionGroupKind.GENERIC,
       sortOrder: groupIndex,
       categoryPriceAdjustmentCents: null,
-      values: (Array.isArray(group.options) ? group.options : []).map((option: any, valueIndex: number) => ({
+      values: (Array.isArray(group.options) ? group.options : []).map((option, valueIndex) => ({
         code: option.id ?? null,
         label: option.name,
         priceAdjustmentCents: option.listPriceAdjustmentCents ?? null,
@@ -247,7 +275,7 @@ function transformProfile(
     }),
   );
 
-  const productionRules: ProductionRuleInput[] = sourceProductionRules.map((p: any) => ({
+  const productionRules: ProductionRuleInput[] = sourceProductionRules.map((p) => ({
     code: String(p.id).toUpperCase(),
     name: p.name,
     isRush: p.mode === "rush",
@@ -258,7 +286,7 @@ function transformProfile(
     notes: p.pricingNote ?? p.sourceText ?? null,
   }));
 
-  const packagingRules: PackagingRuleInput[] = sourcePackagingRules.map((p: any) => ({
+  const packagingRules: PackagingRuleInput[] = sourcePackagingRules.map((p) => ({
     code: String(p.id).toUpperCase(),
     name: p.name,
     unitsPerPackage: p.unitsPerCarton ?? null,
@@ -284,7 +312,7 @@ function transformProfile(
     description: `Imported from ImprintID catalog pricing sync (source sync status: ${profile.syncStatus}).`,
     isDefault: true,
     currency: profile.currency ?? "USD",
-    quantityTiers: quantityBreaks.map((t: any) => ({
+    quantityTiers: quantityBreaks.map((t) => ({
       minQuantity: t.minQuantity,
       maxQuantity: t.maxQuantity ?? null,
       listPriceCents: t.listPriceCents,
@@ -321,13 +349,13 @@ async function main() {
 
   const records = loadCsvRecords(csvPath);
 
-  const candidates: { title: string; profile: any; status: string }[] = [];
+  const candidates: { title: string; profile: SourceProfile; status: string }[] = [];
   for (const row of records) {
     const raw = (row[PROFILE_COLUMN] ?? "").trim();
     if (!raw) continue;
-    let profile: any;
+    let profile: SourceProfile;
     try {
-      profile = JSON.parse(raw);
+      profile = JSON.parse(raw) as SourceProfile;
     } catch (e) {
       console.warn(`Skipping row (unparseable pricing JSON): ${row["Title"] ?? "(no title)"}`);
       continue;

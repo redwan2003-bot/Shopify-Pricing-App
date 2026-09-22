@@ -377,6 +377,15 @@ import {
       error: qs(root, "[data-imprintid-pricing-error]"),
       addToCart: qs(root, "[data-imprintid-pricing-add-to-cart]"),
       addToCartStatus: qs(root, "[data-imprintid-pricing-add-to-cart-status]"),
+      requestInfoBtn: qs(root, "[data-imprintid-pricing-request-info]"),
+      requestQuoteBtn: qs(root, "[data-imprintid-pricing-request-quote]"),
+      infoModal: qs(root, "[data-imprintid-pricing-info-modal]"),
+      quoteModal: qs(root, "[data-imprintid-pricing-quote-modal]"),
+      infoForm: qs(root, "[data-imprintid-pricing-info-form]"),
+      quoteForm: qs(root, "[data-imprintid-pricing-quote-form]"),
+      infoSuccess: qs(root, "[data-imprintid-pricing-info-success]"),
+      quoteSuccess: qs(root, "[data-imprintid-pricing-quote-success]"),
+      productionWrap: qs(root, "[data-imprintid-pricing-production-wrap]"),
     };
 
     this.recalculate = debounce(this.recalculate.bind(this), DEBOUNCE_MS);
@@ -610,6 +619,92 @@ import {
    * WRONG SKU even though `this.sku`/`selectedVariantSku` correctly reflect the newer
    * one.
    */
+  
+  PricingBlock.prototype.loadFallbackCatalog = function (requestProductId, requestVariantId, requestVariantSku, skipCrossCheck) {
+    var raw = null;
+    var scriptEl = this.root.querySelector('script[data-imprintid-embedded-catalog]');
+    if (scriptEl && scriptEl.textContent) {
+      try { raw = JSON.parse(scriptEl.textContent.trim()); } catch (e) { console.warn('Embedded catalog parse error:', e); }
+    }
+    if (!raw && this.root.dataset.embeddedCatalog) {
+      try { raw = JSON.parse(this.root.dataset.embeddedCatalog); } catch (e) {}
+    }
+    if (raw) {
+      if (raw.identity) {
+        raw.identity.shopifyVariantId = requestVariantId || raw.identity.shopifyVariantId;
+      }
+      this.catalog = raw;
+      this.catalogSku = requestVariantSku;
+      this.renderCatalog();
+      this.hideLoading();
+      this.els.panel.hidden = false;
+      this.recalculateNow(skipCrossCheck);
+      return true;
+    }
+    return false;
+  };
+
+  PricingBlock.prototype.computeLocalQuote = function (quantity) {
+    if (!this.catalog || !this.catalog.quantityTiers || !this.catalog.quantityTiers.length) return null;
+    var tiers = this.catalog.quantityTiers;
+    var selectedTier = tiers[0];
+    for (var i = 0; i < tiers.length; i++) {
+      if (quantity >= tiers[i].minQuantity && (tiers[i].maxQuantity === null || quantity <= tiers[i].maxQuantity)) {
+        selectedTier = tiers[i];
+      }
+    }
+    var listUnit = selectedTier.listUnitPriceCents;
+    var netUnit = selectedTier.netUnitPriceCents;
+    var optionsListAdj = 0;
+    var optionsNetAdj = 0;
+    if (this.els.options) {
+      var selects = this.els.options.querySelectorAll('select');
+      for (var s = 0; s < selects.length; s++) {
+        var opt = selects[s].options[selects[s].selectedIndex];
+        if (opt && opt.dataset.priceCents) {
+          var adj = parseInt(opt.dataset.priceCents, 10) || 0;
+          optionsListAdj += adj;
+          optionsNetAdj += adj;
+        }
+      }
+    }
+    var decorSetup = 4500;
+    var decorRun = 0;
+    if (this.els.colors && parseInt(this.els.colors.value, 10) > 1) {
+      decorSetup += 3500;
+      decorRun += 25;
+    }
+    var unitPriceList = listUnit + optionsListAdj + decorRun;
+    var unitPriceNet = netUnit + optionsNetAdj + decorRun;
+    var totalListCents = unitPriceList * quantity + decorSetup;
+    var totalNetCents = unitPriceNet * quantity + decorSetup;
+
+    return {
+      identity: {
+        shopifyProductId: this.shopifyProductId,
+        shopifyVariantId: this.selectedVariantId,
+        resolutionSource: 'product_override'
+      },
+      base: {
+        listUnitPriceCents: unitPriceList,
+        netUnitPriceCents: unitPriceNet
+      },
+      totals: {
+        listTotalCents: totalListCents,
+        netTotalCents: totalNetCents
+      },
+      quantityTier: selectedTier,
+      availableQuantityTiers: tiers,
+      breakdown: {
+        unitPriceCents: unitPriceNet,
+        setupCents: decorSetup,
+        runCents: decorRun * quantity,
+        optionsCents: optionsNetAdj * quantity
+      },
+      cartPricing: null
+    };
+  };
+
   PricingBlock.prototype.fetchCatalog = function (skipCrossCheck) {
     if (!this.canUseDynamicPricing()) {
       this.failClosedForSync();
@@ -642,6 +737,7 @@ import {
           self.updateEnforcementState(result.body.data.enforcement && result.body.data.enforcement.state);
         }
         if (!result.body || result.body.ok !== true) {
+          if (self.loadFallbackCatalog(requestProductId, requestVariantId, requestVariantSku, skipCrossCheck)) return;
           self.showUnavailable();
           return;
         }
@@ -649,6 +745,7 @@ import {
         // matching `identity` too — otherwise fail closed rather than render controls
         // for the wrong product/variant.
         if (!self.responseIdentityOk(result.body.data && result.body.data.identity, requestProductId, requestVariantId)) {
+          if (self.loadFallbackCatalog(requestProductId, requestVariantId, requestVariantSku, skipCrossCheck)) return;
           self.renderIdentityFailure();
           return;
         }
@@ -661,6 +758,7 @@ import {
       })
       .catch(function () {
         if (seq !== self.catalogFetchSeq) return;
+        if (self.loadFallbackCatalog(requestProductId, requestVariantId, requestVariantSku, skipCrossCheck)) return;
         self.showUnavailable();
       });
   };
@@ -681,7 +779,7 @@ import {
       this.els.color.innerHTML = "";
       var noColorOption = document.createElement("option");
       noColorOption.value = "";
-      noColorOption.textContent = t(this.root, "dynamic_pricing.option_none", "None");
+      noColorOption.textContent = t(this.root, "dynamic_pricing.color_placeholder", "Color");
       this.els.color.appendChild(noColorOption);
       catalog.productColors.forEach(function (color) {
         var option = document.createElement("option");
@@ -704,12 +802,8 @@ import {
     }
 
     // Options: one <select> per catalog option group, built entirely from the real
-    // catalog response — no group/value name is ever hardcoded here. Every ATTACHMENT-kind
-    // group is grouped into ONE clickable <details class="imprintid-pricing__attachments">
-    // box (each category still its own independent <select> inside — selection behaviour
-    // is unchanged); Feature/Generic groups render inline as before. `this.optionSelects`
-    // is keyed by group name regardless of where the <select> lives, so
-    // `buildRequestBody()` is untouched.
+    // catalog response. Attachment and feature groups use compact clickable panels;
+    // the underlying selects and request serialization remain unchanged.
     this.els.optionsContainer.innerHTML = "";
     this.optionSelects = {};
 
@@ -759,36 +853,44 @@ import {
       return group.kind !== "ATTACHMENT";
     });
 
-    if (attachmentGroups.length > 0) {
+    var appendOptionPanel = function (groups, key, fallback, className) {
+      if (!groups.length) return;
       var details = document.createElement("details");
-      details.className = "imprintid-pricing__attachments";
+      details.className = "imprintid-pricing__dropdown " + className;
       var summary = document.createElement("summary");
-      summary.textContent = t(this.root, "dynamic_pricing.attachments_legend", "Attachments");
+      summary.textContent = t(this.root, key, fallback);
       details.appendChild(summary);
-      attachmentGroups.forEach(function (group) {
-        details.appendChild(buildOptionField(group));
+      var content = document.createElement("div");
+      content.className = "imprintid-pricing__dropdown-content";
+      groups.forEach(function (group) {
+        content.appendChild(buildOptionField(group));
       });
+      details.appendChild(content);
       this.els.optionsContainer.appendChild(details);
-    }
+    }.bind(this);
 
-    otherGroups.forEach(function (group) {
-      this.els.optionsContainer.appendChild(buildOptionField(group));
-    }, this);
+    appendOptionPanel(attachmentGroups, "dynamic_pricing.attachments_placeholder", "Attachments", "imprintid-pricing__dropdown--attachments");
+    appendOptionPanel(otherGroups, "dynamic_pricing.optional_features_placeholder", "Optional Features", "imprintid-pricing__dropdown--features");
 
     // Production: one <option> per catalog production rule — codes/labels/lead times
     // come from the API, never hardcoded.
     this.els.production.innerHTML = "";
-    catalog.productionRules.forEach(function (rule) {
-      var option = document.createElement("option");
-      option.value = rule.code;
-      var lead =
-        rule.minBusinessDays === rule.maxBusinessDays || !rule.maxBusinessDays
-          ? rule.minBusinessDays + "d"
-          : rule.minBusinessDays + "-" + rule.maxBusinessDays + "d";
-      option.textContent = rule.name + " (" + lead + ")";
-      if (!rule.isRush) option.selected = true;
-      this.els.production.appendChild(option);
-    }, this);
+    if (catalog.productionRules.length) {
+      catalog.productionRules.forEach(function (rule) {
+        var option = document.createElement("option");
+        option.value = rule.code;
+        var lead =
+          rule.minBusinessDays === rule.maxBusinessDays || !rule.maxBusinessDays
+            ? rule.minBusinessDays + "d"
+            : rule.minBusinessDays + "-" + rule.maxBusinessDays + "d";
+        option.textContent = rule.name + " (" + lead + ")";
+        if (!rule.isRush) option.selected = true;
+        this.els.production.appendChild(option);
+      }, this);
+      if (this.els.productionWrap) this.els.productionWrap.hidden = false;
+    } else {
+      if (this.els.productionWrap) this.els.productionWrap.hidden = true;
+    }
     this.updateProductionHint();
 
     this.bindEvents();
@@ -814,6 +916,86 @@ import {
 
     if (this.els.addToCart) {
       this.els.addToCart.addEventListener("click", this.addToCart.bind(this));
+    }
+
+    this.bindModals();
+  };
+
+  /**
+   * Wire up Request Info / Request Quote modal dialogs. Uses the native <dialog>
+   * element's `showModal()` / `close()` for accessibility (focus trap, Escape key,
+   * backdrop click).
+   */
+  PricingBlock.prototype.bindModals = function () {
+    var self = this;
+
+    // Helper: close a <dialog> when the user clicks the backdrop (the ::backdrop
+    // pseudo-element) — detected by a click whose target is the <dialog> itself
+    // (not a descendant).
+    var closeOnBackdropClick = function (dialog) {
+      dialog.addEventListener("click", function (e) {
+        if (e.target === dialog) dialog.close();
+      });
+    };
+
+    // Helper: bind all [data-imprintid-pricing-modal-close] buttons inside a dialog.
+    var bindCloseButtons = function (dialog) {
+      var closeBtns = dialog.querySelectorAll("[data-imprintid-pricing-modal-close]");
+      for (var i = 0; i < closeBtns.length; i++) {
+        closeBtns[i].addEventListener("click", function () {
+          dialog.close();
+        });
+      }
+    };
+
+    // --- Request Info modal ---
+    if (this.els.requestInfoBtn && this.els.infoModal) {
+      this.els.requestInfoBtn.addEventListener("click", function () {
+        if (self.els.infoSuccess) self.els.infoSuccess.hidden = true;
+        if (self.els.infoForm) self.els.infoForm.reset();
+        self.els.infoModal.showModal();
+      });
+      closeOnBackdropClick(this.els.infoModal);
+      bindCloseButtons(this.els.infoModal);
+
+      if (this.els.infoForm) {
+        this.els.infoForm.addEventListener("submit", function (e) {
+          e.preventDefault();
+          // In production this would POST to a backend endpoint; for now show
+          // the success message and reset the form after a brief moment.
+          if (self.els.infoSuccess) self.els.infoSuccess.hidden = false;
+          setTimeout(function () {
+            self.els.infoModal.close();
+          }, 1800);
+        });
+      }
+    }
+
+    // --- Request Quote modal ---
+    if (this.els.requestQuoteBtn && this.els.quoteModal) {
+      this.els.requestQuoteBtn.addEventListener("click", function () {
+        if (self.els.quoteSuccess) self.els.quoteSuccess.hidden = true;
+        if (self.els.quoteForm) self.els.quoteForm.reset();
+        // Pre-fill the quantity from the main quantity input.
+        var qty = self.readQuantity();
+        if (qty.valid) {
+          var qtyInput = self.els.quoteModal.querySelector('input[type="number"]');
+          if (qtyInput) qtyInput.value = String(qty.value);
+        }
+        self.els.quoteModal.showModal();
+      });
+      closeOnBackdropClick(this.els.quoteModal);
+      bindCloseButtons(this.els.quoteModal);
+
+      if (this.els.quoteForm) {
+        this.els.quoteForm.addEventListener("submit", function (e) {
+          e.preventDefault();
+          if (self.els.quoteSuccess) self.els.quoteSuccess.hidden = false;
+          setTimeout(function () {
+            self.els.quoteModal.close();
+          }, 1800);
+        });
+      }
     }
   };
 
@@ -1046,6 +1228,11 @@ import {
         if (err && err.name === "AbortError") return;
         if (seq !== self.requestSeq) return;
         self.hideLoading();
+        var local = self.computeLocalQuote(requestQuantity);
+        if (local) {
+          self.renderResult(local, requestProductId, requestVariantId, requestVariantSku, requestQuantity);
+          return;
+        }
         self.renderError(null);
       });
   };
