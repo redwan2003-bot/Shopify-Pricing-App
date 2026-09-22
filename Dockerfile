@@ -11,6 +11,7 @@ COPY . .
 
 # Generate Prisma client for Linux and build React Router app
 RUN npx prisma generate --schema=prisma/schema.postgresql.prisma
+RUN cp prisma/schema.postgresql.prisma prisma/schema.prisma
 RUN npm run build
 
 # Stage 2: Runner
@@ -40,3 +41,4 @@ USER node
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "./docker-entrypoint.sh"]
 CMD ["npm", "run", "start"]
+
