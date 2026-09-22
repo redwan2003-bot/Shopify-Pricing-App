@@ -149,12 +149,12 @@ export async function loadPricingContext(
   let profile: LoadedPricingProfile | null = null;
 
   if (ref.shopifyProductId) {
-    const override = await prisma.productPricingOverride.findUnique({
+    const bareId = ref.shopifyProductId.replace(/^gid:\/\/shopify\/Product\//, "");
+    const gid = `gid://shopify/Product/${bareId}`;
+    const override = await prisma.productPricingOverride.findFirst({
       where: {
-        storeId_shopifyProductId: {
-          storeId: store.id,
-          shopifyProductId: ref.shopifyProductId,
-        },
+        storeId: store.id,
+        shopifyProductId: { in: [bareId, gid] },
       },
     });
 

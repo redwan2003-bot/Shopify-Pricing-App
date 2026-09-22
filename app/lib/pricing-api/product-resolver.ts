@@ -240,8 +240,13 @@ async function classifyProductOverride(
   storeId: string,
   shopifyProductId: string,
 ): Promise<"authoritative" | "invalid" | "none"> {
-  const override = await prisma.productPricingOverride.findUnique({
-    where: { storeId_shopifyProductId: { storeId, shopifyProductId } },
+  const bareId = numericIdFromGid(shopifyProductId) ?? shopifyProductId;
+  const gid = toProductGid(bareId);
+  const override = await prisma.productPricingOverride.findFirst({
+    where: {
+      storeId,
+      shopifyProductId: { in: [bareId, gid] },
+    },
   });
   if (!override) return "none";
   if (!override.isActive) return "invalid";

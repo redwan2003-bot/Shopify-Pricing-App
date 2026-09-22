@@ -20,7 +20,7 @@
     "db:seed": "prisma db seed",
     "fn:config": "node extensions/imprintid-cart-pricing/scripts/generate-config.mjs && node extensions/imprintid-cart-validation/scripts/generate-config.mjs",
     "pretest": "npm run fn:config",
-    "test": "node --test \"app/**/*.test.ts\" \"extensions/**/*.test.ts\" \"test/**/*.test.ts\"",
+    "test": "node --test --test-concurrency=1 \"app/**/*.test.ts\" \"extensions/**/*.test.ts\" \"test/**/*.test.ts\"",
     "verify:app-proxy": "node --experimental-loader=./scripts/resolve-ts-loader.mjs scripts/verify-app-proxy.mjs",
     "provision": "node scripts/shopify/provision.mjs",
     "graphql-codegen": "graphql-codegen",

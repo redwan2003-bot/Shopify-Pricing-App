@@ -26,7 +26,7 @@ function buildResult(overrides: Partial<PricingCalculationResult> = {}): Pricing
       listChargesCents: 33000,
       netChargesCents: 26400,
     },
-    options: { selections: [], chargesCents: 0 },
+    options: { selections: [], chargesCents: 0, netChargesCents: 0 },
     production: { code: "RUSH", name: "Rush", isRush: true, minBusinessDays: 5, maxBusinessDays: 5, relatedSku: null, feeCents: null, notes: null },
     packaging: null,
     totals: { listTotalCents: 197000, netTotalCents: 124400 },
@@ -52,7 +52,7 @@ test("buildCartPricingPayload includes options/production/packaging/color in the
   const result = buildResult({
     decoration: null,
     productColor: { code: "ROYAL", name: "Royal Blue", priceCode: null, priceAdjustmentCents: 15 },
-    options: { selections: [{ groupName: "Optional Features", optionValueId: "ov1", optionLabel: "Cell Phone Loop", source: "option", priceAdjustmentCents: 25 }], chargesCents: 25 },
+    options: { selections: [{ groupName: "Optional Features", optionValueId: "ov1", optionLabel: "Cell Phone Loop", source: "option", priceAdjustmentCents: 25, netPriceAdjustmentCents: 25 }], chargesCents: 25, netChargesCents: 25 },
     production: { code: "RUSH", name: "Rush", isRush: true, minBusinessDays: 5, maxBusinessDays: 5, relatedSku: null, feeCents: 500, notes: null },
     packaging: { code: "STANDARD_CARTON", name: "Standard Carton", unitsPerPackage: 250, cartonWeightLbs: 8.5, lengthIn: 12, widthIn: 8, heightIn: 6, feeCents: 100 },
     totals: { listTotalCents: 164000, netTotalCents: 98000 + 15 + 25 + 500 + 100 },

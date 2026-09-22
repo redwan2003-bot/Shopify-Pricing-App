@@ -185,13 +185,13 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("every ATTACHMENT group is inside ONE clickable <details> Attachments box; Feature/Generic groups are not", async () => {
+test("attachment and feature groups render in separate clickable dropdown panels", async () => {
   const { root } = await setupPricingBlock({
     fetchHandler: (call) => (call.method === "GET" ? CATALOG_RESPONSE : buildCalcResponse()),
   });
   await wait(50);
 
-  const boxes = root.querySelectorAll("details.imprintid-pricing__attachments");
+  const boxes = root.querySelectorAll("details.imprintid-pricing__dropdown--attachments");
   assert.equal(boxes.length, 1, "exactly one Attachments disclosure");
   const box = boxes[0] as HTMLDetailsElement;
   assert.equal(box.querySelector("summary")?.textContent, "Attachments");
@@ -203,10 +203,14 @@ test("every ATTACHMENT group is inside ONE clickable <details> Attachments box; 
     ["Attachment — Heavy Duty", "Attachment — Standard"],
   );
 
-  // The Feature group renders as a normal field, NOT inside the Attachments box.
+  // The Feature group is inside its own independent dropdown panel.
   const featureSelect = Array.from(root.querySelectorAll("select")).find((s) => s.dataset.groupName === "Optional Features")!;
   assert.ok(featureSelect, "the Feature group still renders");
   assert.equal(box.contains(featureSelect), false, "the Feature group is not inside the Attachments box");
+  const featureBox = root.querySelector("details.imprintid-pricing__dropdown--features") as HTMLDetailsElement;
+  assert.ok(featureBox, "exactly one Optional Features disclosure");
+  assert.equal(featureBox.querySelector("summary")?.textContent, "Optional Features");
+  assert.equal(featureBox.contains(featureSelect), true, "the Feature group is inside its own dropdown box");
 
   // Selecting an attachment inside the (default-collapsed) box still drives a request.
   assert.equal(box.open, false, "collapsed by default — it's a click-to-open box");

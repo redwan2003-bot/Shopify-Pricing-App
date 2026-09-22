@@ -2,14 +2,14 @@
 
 client_id = "d0d1f8d2c664325e5472f15b4fae3ac4"
 name = "ImprintID Dynamic Pricing"
-application_url = "https://example.com"
+application_url = "https://shopify-pricing-app.onrender.com"
 embedded = true
 
 [build]
 automatically_update_urls_on_dev = true
 
 [webhooks]
-api_version = "2026-10"
+api_version = "2026-07"
 
   [[webhooks.subscriptions]]
   uri = "/webhooks/app/scopes_update"
@@ -51,9 +51,13 @@ api_version = "2026-10"
 scopes = "write_products,write_cart_transforms,write_validations"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [
+  "https://shopify-pricing-app.onrender.com/api/auth",
+  "https://shopify-pricing-app.onrender.com/auth/callback",
+  "https://shopify-pricing-app.onrender.com/auth/shopify/callback"
+]
 
 [app_proxy]
-url = "https://example.com/apps/imprintid-pricing"
+url = "https://shopify-pricing-app.onrender.com/apps/imprintid-pricing"
 subpath = "imprintid-pricing"
 prefix = "apps"

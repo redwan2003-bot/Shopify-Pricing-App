@@ -305,7 +305,7 @@ test("loop-fix 9b: the calculation request body never carries a shop / shopDomai
 // ============================================================================
 
 function optionValue(id: string, label: string): PricingCatalogOptionGroup["values"][number] {
-  return { id, code: id.toUpperCase(), label, priceCode: null, priceAdjustmentCents: 0, resolvedPriceCents: 0, priceSource: "option" };
+  return { id, code: id.toUpperCase(), label, priceCode: null, priceAdjustmentCents: 0, resolvedPriceCents: 0, resolvedNetPriceCents: 0, priceSource: "option" };
 }
 
 function optionGroup(name: string, kind: string, values: PricingCatalogOptionGroup["values"]): PricingCatalogOptionGroup {
@@ -327,7 +327,7 @@ function resultFixture(overrides: Partial<PricingCalculationResult> = {}): Prici
     base: { quantity: 100, listUnitPriceCents: 229, netUnitPriceCents: 137, listSubtotalCents: 22900, netSubtotalCents: 13700 },
     productColor: null,
     decoration: null,
-    options: { selections: [], chargesCents: 0 },
+    options: { selections: [], chargesCents: 0, netChargesCents: 0 },
     production: {
       code: "STANDARD",
       name: "Standard Production",

@@ -50,3 +50,7 @@ yarn-error.log*
 # Test/coverage output
 /coverage
 /.nyc_output
+imprint-id-dynamic-pricing/
+scripts/check_*.mjs
+scripts/query_*.mjs
+scripts/test_*.mjs

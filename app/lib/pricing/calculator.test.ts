@@ -104,8 +104,8 @@ function buildProfile(overrides: Partial<PricingProfileData> = {}): PricingProfi
         isRequired: false,
         categoryPriceAdjustmentCents: 0,
         optionValues: [
-          { id: "ov_jhook", code: null, label: "J Hook", priceCode: null, priceAdjustmentCents: null },
-          { id: "ov_lobster", code: null, label: "Lobster Claw", priceCode: null, priceAdjustmentCents: null },
+          { id: "ov_jhook", code: null, label: "J Hook", priceCode: null, priceAdjustmentCents: null, netPriceAdjustmentCents: null },
+          { id: "ov_lobster", code: null, label: "Lobster Claw", priceCode: null, priceAdjustmentCents: null, netPriceAdjustmentCents: null },
         ],
       },
       {
@@ -115,8 +115,8 @@ function buildProfile(overrides: Partial<PricingProfileData> = {}): PricingProfi
         isRequired: false,
         categoryPriceAdjustmentCents: null,
         optionValues: [
-          { id: "ov_buckle", code: null, label: "Buckle Release", priceCode: "LA01", priceAdjustmentCents: 30 },
-          { id: "ov_cellphone", code: null, label: "Cell Phone Loop", priceCode: null, priceAdjustmentCents: 25 },
+          { id: "ov_buckle", code: null, label: "Buckle Release", priceCode: "LA01", priceAdjustmentCents: 30, netPriceAdjustmentCents: null },
+          { id: "ov_cellphone", code: null, label: "Cell Phone Loop", priceCode: null, priceAdjustmentCents: 25, netPriceAdjustmentCents: null },
         ],
       },
       {
@@ -125,7 +125,7 @@ function buildProfile(overrides: Partial<PricingProfileData> = {}): PricingProfi
         kind: OptionGroupKind.GENERIC,
         isRequired: false,
         categoryPriceAdjustmentCents: null,
-        optionValues: [{ id: "ov_noprice", code: null, label: "Mystery Option", priceCode: null, priceAdjustmentCents: null }],
+          optionValues: [{ id: "ov_noprice", code: null, label: "Mystery Option", priceCode: null, priceAdjustmentCents: null, netPriceAdjustmentCents: null }],
       },
     ],
     productColors: [

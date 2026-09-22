@@ -20,6 +20,7 @@ import { PrismaClient } from "@prisma/client";
 import { connectAdmin } from "./runtime.mjs";
 import { DEV_STORE, POLICY_REVISION } from "./constants.mjs";
 import { buildProductPolicyValue, canonicalPolicyJson } from "../../app/lib/catalog/policy-value.ts";
+import { overrideProductKey } from "../../app/lib/catalog/gid.ts";
 
 const METAFIELD_BATCH_SIZE = 25;
 
@@ -141,10 +142,11 @@ async function main() {
 
       // Local bookkeeping parity with the Task 6A bulk-assignment system.
       for (const m of batch) {
+        const key = overrideProductKey(m.productGid) ?? m.productGid;
         await prisma.productPricingOverride.upsert({
-          where: { storeId_shopifyProductId: { storeId: store.id, shopifyProductId: m.productGid } },
+          where: { storeId_shopifyProductId: { storeId: store.id, shopifyProductId: key } },
           update: { pricingProfileId: m.profile.id, isActive: true },
-          create: { storeId: store.id, shopifyProductId: m.productGid, pricingProfileId: m.profile.id, isActive: true },
+          create: { storeId: store.id, shopifyProductId: key, pricingProfileId: m.profile.id, isActive: true },
         });
       }
     }
