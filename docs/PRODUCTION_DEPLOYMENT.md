@@ -61,11 +61,38 @@ To apply the schema to a new PostgreSQL instance:
 npx prisma db push --schema=prisma/schema.postgresql.prisma
 ```
 
-### Seeding Catalog Data
-Run the catalog import script against the PostgreSQL database:
+### Seeding Catalog Data (pricing profiles + product links)
+
+The storefront only prices a product when **three things agree**: the pricing profile exists in
+the production database, a `ProductPricingOverride` row links the Shopify product to it, and the
+product's `$app:imprintid/pricing_policy` metafield carries that profile's **id and revision**.
+Profile ids are generated per database, and the revision bumps whenever a re-import changes
+pricing, so seeding a different database (or re-importing) leaves the metafields stale until they
+are re-synced. Until all three match, quotes fail validation.
+
+Run these from your machine against the **production** database (use the database's *external*
+connection string). The Prisma client must be generated for PostgreSQL first:
+
 ```bash
-node --loader ts-node/esm scripts/import-catalog-pricing.ts
+export DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME"   # PowerShell: $env:DATABASE_URL = "..."
+npm run prisma:generate:pg
+
+# 1. Load the pricing profiles (idempotent; safe to re-run)
+npm run catalog:import -- "path/to/imprintid_catalog_shopify_import_updated.csv" --shop imprintid-pricing-dev.myshopify.com
+
+# 2. Open the ImprintID app once in Shopify admin so the app server refreshes its Admin session,
+#    then check how the store and the database compare (read-only, exits 1 if anything differs)
+npm run catalog:link -- --check
+
+# 3. Link products and write/refresh the policy metafields (skips ones already correct)
+npm run catalog:link
+
+# 4. Confirm
+npm run catalog:link -- --check     # should print "In sync."
 ```
+
+Run step 2-4 again after **any** pricing re-import. Afterwards, switch the local client back with
+`npx prisma generate` (SQLite).
 
 ---
 
