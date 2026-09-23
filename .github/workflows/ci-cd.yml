@@ -36,6 +36,13 @@ jobs:
           npx prisma generate --schema=prisma/schema.prisma
           npx prisma generate --schema=prisma/schema.postgresql.prisma
 
+      - name: Check SQLite and PostgreSQL schemas match
+        run: |
+          diff <(sed -E '/^\s*(provider|url)\s*=/d' prisma/schema.prisma) \
+               <(sed -E '/^\s*(provider|url)\s*=/d' prisma/schema.postgresql.prisma) \
+            || { echo "::error::prisma/schema.prisma and schema.postgresql.prisma differ beyond the datasource block"; exit 1; }
+        shell: bash
+
       - name: Run Full Test Suite
         run: npm test
 
