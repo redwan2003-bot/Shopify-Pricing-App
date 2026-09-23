@@ -283,20 +283,24 @@
         <form class="imprintid-pricing__modal-body" data-imprintid-pricing-info-form>
           <div class="imprintid-pricing__modal-field">
             <label for="info-name-{{ block.id }}">Name *</label>
-            <input type="text" id="info-name-{{ block.id }}" class="imprintid-pricing__input" required placeholder="Your full name">
+            <input type="text" id="info-name-{{ block.id }}" name="name" class="imprintid-pricing__input" required placeholder="Your full name">
           </div>
           <div class="imprintid-pricing__modal-field">
             <label for="info-email-{{ block.id }}">Email *</label>
-            <input type="email" id="info-email-{{ block.id }}" class="imprintid-pricing__input" required placeholder="your.email@example.com">
+            <input type="email" id="info-email-{{ block.id }}" name="email" class="imprintid-pricing__input" required placeholder="your.email@example.com">
           </div>
           <div class="imprintid-pricing__modal-field">
             <label for="info-message-{{ block.id }}">Message *</label>
-            <textarea id="info-message-{{ block.id }}" class="imprintid-pricing__textarea" rows="3" required placeholder="What would you like to know about this product?"></textarea>
+            <textarea id="info-message-{{ block.id }}" name="message" class="imprintid-pricing__textarea" rows="3" required placeholder="What would you like to know about this product?"></textarea>
+          </div>
+          <div class="imprintid-pricing__hp" aria-hidden="true">
+            <label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
           </div>
           <div class="imprintid-pricing__modal-footer">
             <button type="submit" class="imprintid-pricing__btn imprintid-pricing__btn--primary">Send Message</button>
             <button type="button" class="imprintid-pricing__btn imprintid-pricing__btn--cancel" data-imprintid-pricing-modal-close>Cancel</button>
           </div>
+          <p class="imprintid-pricing__modal-error" data-imprintid-pricing-info-error hidden role="alert"></p>
           <p class="imprintid-pricing__modal-success" data-imprintid-pricing-info-success hidden>Thank you! Your inquiry has been sent.</p>
         </form>
       </div>
@@ -311,24 +315,28 @@
         <form class="imprintid-pricing__modal-body" data-imprintid-pricing-quote-form>
           <div class="imprintid-pricing__modal-field">
             <label for="quote-name-{{ block.id }}">Name *</label>
-            <input type="text" id="quote-name-{{ block.id }}" class="imprintid-pricing__input" required placeholder="Your full name">
+            <input type="text" id="quote-name-{{ block.id }}" name="name" class="imprintid-pricing__input" required placeholder="Your full name">
           </div>
           <div class="imprintid-pricing__modal-field">
             <label for="quote-email-{{ block.id }}">Email *</label>
-            <input type="email" id="quote-email-{{ block.id }}" class="imprintid-pricing__input" required placeholder="your.email@example.com">
+            <input type="email" id="quote-email-{{ block.id }}" name="email" class="imprintid-pricing__input" required placeholder="your.email@example.com">
           </div>
           <div class="imprintid-pricing__modal-field">
             <label for="quote-qty-{{ block.id }}">Quantity</label>
-            <input type="number" id="quote-qty-{{ block.id }}" class="imprintid-pricing__input" min="1" placeholder="100">
+            <input type="number" id="quote-qty-{{ block.id }}" name="quantity" class="imprintid-pricing__input" min="1" placeholder="100">
           </div>
           <div class="imprintid-pricing__modal-field">
             <label for="quote-notes-{{ block.id }}">Project Requirements &amp; Notes</label>
-            <textarea id="quote-notes-{{ block.id }}" class="imprintid-pricing__textarea" rows="3" placeholder="Colors, in-hand dates, attachments, or custom branding specifications..."></textarea>
+            <textarea id="quote-notes-{{ block.id }}" name="message" class="imprintid-pricing__textarea" rows="3" placeholder="Colors, in-hand dates, attachments, or custom branding specifications..."></textarea>
+          </div>
+          <div class="imprintid-pricing__hp" aria-hidden="true">
+            <label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
           </div>
           <div class="imprintid-pricing__modal-footer">
             <button type="submit" class="imprintid-pricing__btn imprintid-pricing__btn--primary">Submit Quote Request</button>
             <button type="button" class="imprintid-pricing__btn imprintid-pricing__btn--cancel" data-imprintid-pricing-modal-close>Cancel</button>
           </div>
+          <p class="imprintid-pricing__modal-error" data-imprintid-pricing-quote-error hidden role="alert"></p>
           <p class="imprintid-pricing__modal-success" data-imprintid-pricing-quote-success hidden>Quote request submitted! We will be in touch shortly.</p>
         </form>
       </div>
@@ -339,6 +347,7 @@
 {{ 'dynamic-pricing.css' | asset_url | stylesheet_tag }}
 <script>
   window.ImprintIdPricingStrings = {
+    "dynamic_pricing.inquiry_error": {{ 'dynamic_pricing.inquiry_error' | t | json }},
     "dynamic_pricing.loading_slow": {{ 'dynamic_pricing.loading_slow' | t | json }},
     "dynamic_pricing.unsupported_product": {{ 'dynamic_pricing.unsupported_product' | t | json }},
     "dynamic_pricing.invalid_quantity": {{ 'dynamic_pricing.invalid_quantity' | t | json }},

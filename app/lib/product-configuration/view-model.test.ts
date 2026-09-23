@@ -30,6 +30,9 @@ function buildCatalog(overrides: Partial<PricingCatalog> = {}): PricingCatalog {
     ],
     productColors: [],
     decorationMethods: ["SCREEN_PRINT"],
+    decorationCapabilities: [
+      { method: "SCREEN_PRINT", maxColors: 2, secondLocation: true, reverseSide: true, repeatOrder: true },
+    ],
     decorationColorCharges: [],
     optionGroups: [
       { name: "Attachment — Standard", kind: "ATTACHMENT", isRequired: false, categoryPriceAdjustmentCents: 0, values: [] },

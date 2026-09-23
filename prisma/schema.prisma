@@ -57,6 +57,7 @@ model Store {
   bulkAssignmentItems     BulkAssignmentItem[]
   bulkAssignmentAudits    BulkAssignmentAudit[]
   webhookEvents           WebhookEvent[]
+  inquiries               Inquiry[]
 }
 
 // A named pricing strategy (e.g. "Standard", "Wholesale") a store can apply to products.
@@ -675,4 +676,27 @@ model WebhookEvent {
   @@unique([storeId, webhookId])
   @@index([storeId])
   @@index([processedAt])
+}
+
+// A customer's "Request Info" / "Request Quote" message from the storefront pricing block.
+// Store-scoped like every other model here; `configuration` is a bounded JSON snapshot of
+// what the customer had selected when they wrote in.
+model Inquiry {
+  id               String   @id @default(cuid())
+  storeId          String
+  store            Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  kind             String // info | quote
+  status           String   @default("new") // new | handled
+  name             String
+  email            String
+  message          String
+  quantity         Int?
+  shopifyProductId String?
+  shopifyVariantId String?
+  sku              String?
+  configuration    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([storeId, status, createdAt])
 }

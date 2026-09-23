@@ -420,6 +420,8 @@ import {
       quoteForm: qs(root, "[data-imprintid-pricing-quote-form]"),
       infoSuccess: qs(root, "[data-imprintid-pricing-info-success]"),
       quoteSuccess: qs(root, "[data-imprintid-pricing-quote-success]"),
+      infoError: qs(root, "[data-imprintid-pricing-info-error]"),
+      quoteError: qs(root, "[data-imprintid-pricing-quote-error]"),
       productionWrap: qs(root, "[data-imprintid-pricing-production-wrap]"),
     };
 
@@ -966,6 +968,7 @@ import {
     if (this.els.requestInfoBtn && this.els.infoModal) {
       this.els.requestInfoBtn.addEventListener("click", function () {
         if (self.els.infoSuccess) self.els.infoSuccess.hidden = true;
+        if (self.els.infoError) self.els.infoError.hidden = true;
         if (self.els.infoForm) self.els.infoForm.reset();
         self.els.infoModal.showModal();
       });
@@ -975,12 +978,7 @@ import {
       if (this.els.infoForm) {
         this.els.infoForm.addEventListener("submit", function (e) {
           e.preventDefault();
-          // In production this would POST to a backend endpoint; for now show
-          // the success message and reset the form after a brief moment.
-          if (self.els.infoSuccess) self.els.infoSuccess.hidden = false;
-          setTimeout(function () {
-            self.els.infoModal.close();
-          }, 1800);
+          self.submitInquiry("info", self.els.infoForm, self.els.infoSuccess, self.els.infoError, self.els.infoModal);
         });
       }
     }
@@ -989,6 +987,7 @@ import {
     if (this.els.requestQuoteBtn && this.els.quoteModal) {
       this.els.requestQuoteBtn.addEventListener("click", function () {
         if (self.els.quoteSuccess) self.els.quoteSuccess.hidden = true;
+        if (self.els.quoteError) self.els.quoteError.hidden = true;
         if (self.els.quoteForm) self.els.quoteForm.reset();
         // Pre-fill the quantity from the main quantity input.
         var qty = self.readQuantity();
@@ -1004,13 +1003,97 @@ import {
       if (this.els.quoteForm) {
         this.els.quoteForm.addEventListener("submit", function (e) {
           e.preventDefault();
-          if (self.els.quoteSuccess) self.els.quoteSuccess.hidden = false;
-          setTimeout(function () {
-            self.els.quoteModal.close();
-          }, 1800);
+          self.submitInquiry("quote", self.els.quoteForm, self.els.quoteSuccess, self.els.quoteError, self.els.quoteModal);
         });
       }
     }
+  };
+
+  // Where the storefront forms post: the sibling App Proxy route next to `/pricing`.
+  PricingBlock.prototype.inquiryUrl = function () {
+    return this.proxyPath.replace(/\/pricing(\?.*)?$/, "/inquiry");
+  };
+
+  // What the customer had configured when they wrote in: context for whoever answers.
+  PricingBlock.prototype.snapshotConfiguration = function () {
+    var snapshot = { displayedTotal: this.els.total ? this.els.total.textContent.trim() : null };
+    try {
+      snapshot.request = this.buildRequestBody();
+    } catch (e) {
+      /* no valid selection yet: send the message without a configuration */
+    }
+    return snapshot;
+  };
+
+  // Sends a "Request Info" / "Request Quote" message to the app. Success is shown only when
+  // the server confirms it stored the message; any failure is shown to the customer instead
+  // of pretending it was sent. A single attempt: retrying a POST could store it twice.
+  PricingBlock.prototype.submitInquiry = function (kind, form, successEl, errorEl, modal) {
+    var self = this;
+    var value = function (name) {
+      var el = form.elements[name];
+      return el ? String(el.value || "").trim() : "";
+    };
+    var submit = form.querySelector('button[type="submit"]');
+    var showError = function (message) {
+      if (submit) submit.disabled = false;
+      if (errorEl) {
+        errorEl.textContent = message || t(self.root, "dynamic_pricing.inquiry_error", "We could not send your message. Please try again in a moment.");
+        errorEl.hidden = false;
+      }
+    };
+    if (errorEl) errorEl.hidden = true;
+    if (successEl) successEl.hidden = true;
+    if (submit) submit.disabled = true;
+
+    var payload = {
+      kind: kind,
+      name: value("name"),
+      email: value("email"),
+      message: value("message"),
+      quantity: value("quantity") || undefined,
+      website: value("website"),
+      shopifyProductId: this.shopifyProductId || undefined,
+      shopifyVariantId: this.selectedVariantId || undefined,
+      sku: this.selectedVariantSku || this.sku || undefined,
+      configuration: this.snapshotConfiguration(),
+    };
+
+    fetchWithRetry(
+      this.inquiryUrl(),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(payload),
+      },
+      1,
+      60000,
+    )
+      .then(function (response) {
+        return response.json().then(
+          function (body) {
+            return { ok: response.ok && !!body && body.ok === true, body: body };
+          },
+          function () {
+            return { ok: false, body: null };
+          },
+        );
+      })
+      .then(function (result) {
+        if (!result.ok) {
+          showError(result.body && result.body.error && result.body.error.message);
+          return;
+        }
+        if (submit) submit.disabled = false;
+        form.reset();
+        if (successEl) successEl.hidden = false;
+        window.setTimeout(function () {
+          if (modal && modal.open) modal.close();
+        }, 2500);
+      })
+      .catch(function () {
+        showError(null);
+      });
   };
 
   // Formats one <option>'s visible text as "Label — price", so the customer sees the

@@ -824,3 +824,21 @@
     width: 100%;
   }
 }
+
+/* Honeypot for the inquiry forms: present for bots, invisible and unreachable for people. */
+.imprintid-pricing__hp {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.imprintid-pricing__modal-error {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--imprintid-radius);
+  background: var(--imprintid-error-bg);
+  color: var(--imprintid-error);
+  font-size: 0.9rem;
+}

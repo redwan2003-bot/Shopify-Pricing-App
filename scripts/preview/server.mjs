@@ -174,6 +174,7 @@ globalThis.fetch = async (input, init) => {
 };
 
 const route = await import(pathToFileURL(path.join(ROOT, "app/routes/apps.imprintid-pricing.pricing.tsx")).href);
+const inquiryRoute = await import(pathToFileURL(path.join(ROOT, "app/routes/apps.imprintid-pricing.inquiry.tsx")).href);
 
 // ---------------------------------------------------------------------------------------
 // Liquid rendering
@@ -274,7 +275,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ items: [{ id: 1, quantity: 1 }] }));
     }
-    if (u.pathname === "/apps/imprintid-pricing/pricing") {
+    if (u.pathname === "/apps/imprintid-pricing/pricing" || u.pathname === "/apps/imprintid-pricing/inquiry") {
       const params = { shop: HARNESS_SHOP, timestamp: String(Math.trunc(Date.now() / 1000)) };
       for (const [k, v] of u.searchParams) params[k] = v;
       const signature = signQuery(params);
@@ -285,7 +286,8 @@ const server = http.createServer(async (req, res) => {
         headers: { "Content-Type": req.headers["content-type"] || "application/json" },
         body,
       });
-      const response = req.method === "POST" ? await route.action({ request, params: {}, context: {} }) : await route.loader({ request, params: {}, context: {} });
+      const handler = u.pathname.endsWith("/inquiry") ? inquiryRoute.action : req.method === "POST" ? route.action : route.loader;
+      const response = await handler({ request, params: {}, context: {} });
       res.writeHead(response.status, { "Content-Type": "application/json" });
       return res.end(await response.text());
     }

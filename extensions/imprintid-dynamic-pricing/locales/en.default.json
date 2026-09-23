@@ -3,6 +3,7 @@
     "heading": "Dynamic Pricing",
     "unsupported_product": "Dynamic pricing is currently unavailable for this product.",
     "loading_options": "Loading pricing options…",
+    "inquiry_error": "We could not send your message. Please try again in a moment.",
     "loading_slow": "Still loading. The first request after a quiet period can take a little longer.",
     "quantity_label": "Quantity",
     "invalid_quantity": "Please enter a valid quantity.",
