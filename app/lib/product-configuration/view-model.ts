@@ -311,3 +311,53 @@ export function buildQuoteSummary(
 ): SelectedConfigurationRow[] {
   return buildSelectedConfigurationRows(catalog, state);
 }
+
+/** What the selected decoration method can price on this product (from the catalog). `null`
+ * when no method is selected or the catalog predates capabilities. */
+export function decorationCapabilitiesFor(catalog: PricingCatalog, method: string | null) {
+  return catalog.decorationCapabilities?.find((c) => c.method === method) ?? null;
+}
+
+/**
+ * Keeps the decoration selections inside what the chosen method's pricing rules can satisfy.
+ * Offering "2 locations" for a method with no second-location charge (or a repeat order with
+ * no repeat-order charge) makes every calculation fail, so anything unsupported is reset to
+ * its neutral value. Returns the same object when nothing needed to change.
+ */
+export function clampDecorationToCapabilities(state: ProductConfigurationState, catalog: PricingCatalog): ProductConfigurationState {
+  const caps = decorationCapabilitiesFor(catalog, state.decorationMethod);
+  const colors = (caps?.maxColors ?? 1) >= 2 ? state.colors : 1;
+  const locations = caps?.secondLocation ? state.locations : 1;
+  const reverseSide = caps?.reverseSide ? state.reverseSide : false;
+  const differentReverseArtwork = reverseSide ? state.differentReverseArtwork : false;
+  const repeatOrder = caps?.repeatOrder ? state.repeatOrder : false;
+  if (
+    colors === state.colors &&
+    locations === state.locations &&
+    reverseSide === state.reverseSide &&
+    differentReverseArtwork === state.differentReverseArtwork &&
+    repeatOrder === state.repeatOrder
+  ) {
+    return state;
+  }
+  return { ...state, colors, locations, reverseSide, differentReverseArtwork, repeatOrder };
+}
+
+const FRIENDLY_PRICING_ERRORS: Record<string, string> = {
+  DECORATION_RULE_NOT_FOUND: "This combination of imprint options isn't priced for this product. Try a simpler selection.",
+  COLOR_PRICING_UNAVAILABLE: "This product has no price for that number of imprint colors. Choose fewer colors.",
+  OPTION_PRICING_UNAVAILABLE: "One of the selected options has no price yet, so it can't be included.",
+  QUANTITY_BELOW_MINIMUM: "That quantity is below the minimum order for this product.",
+  QUANTITY_TIER_NOT_FOUND: "No quantity pricing is set up for this product.",
+  INVALID_QUANTITY: "Enter a whole number quantity of 1 or more.",
+  PRICING_PROFILE_NOT_FOUND: "No pricing profile is linked to this product yet.",
+  PRICING_PROFILE_INACTIVE: "This product's pricing profile is turned off.",
+  PRODUCTION_RULE_NOT_FOUND: "That production option isn't available for this product.",
+  MISSING_REQUIRED_OPTION_GROUP: "A required option hasn't been chosen yet.",
+};
+
+/** Plain-language text for a pricing failure. The engine's own message (which names internal
+ * rule codes) is only used for codes this map doesn't cover. */
+export function friendlyPricingErrorMessage(code: string | undefined, fallback: string): string {
+  return (code && FRIENDLY_PRICING_ERRORS[code]) || fallback;
+}

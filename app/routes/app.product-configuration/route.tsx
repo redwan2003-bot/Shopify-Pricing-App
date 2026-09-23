@@ -26,8 +26,7 @@ import {
   selectAttachmentGroups,
   selectFeatureGroups,
   selectGenericGroups,
-  shouldSubmitCalculation,
-} from "../../lib/product-configuration/view-model.ts";
+  shouldSubmitCalculation, clampDecorationToCapabilities, decorationCapabilitiesFor, friendlyPricingErrorMessage } from "../../lib/product-configuration/view-model.ts";
 
 import { ProductHeader } from "./components/ProductHeader.tsx";
 import { ProductMedia } from "./components/ProductMedia.tsx";
@@ -245,7 +244,7 @@ export default function ProductConfigurationPreview() {
     if (data.ok) {
       setOutcome({ status: "success", result: data.data });
     } else {
-      setOutcome({ status: "error", code: data.error.code, message: data.error.message });
+      setOutcome({ status: "error", code: data.error.code, message: friendlyPricingErrorMessage(data.error.code, data.error.message) });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher.state, fetcher.data]);
@@ -295,9 +294,14 @@ export default function ProductConfigurationPreview() {
   const attachmentGroups = selectAttachmentGroups(catalog);
   const featureGroups = selectFeatureGroups(catalog);
   const genericGroups = selectGenericGroups(catalog);
+  const decorationCaps = decorationCapabilitiesFor(catalog, state.decorationMethod);
 
   function updateState(patch: Partial<ProductConfigurationState>) {
-    setState((current) => (current ? { ...current, ...patch } : current));
+    setState((current) => {
+      if (!current) return current;
+      const next = { ...current, ...patch };
+      return catalog ? clampDecorationToCapabilities(next, catalog) : next;
+    });
   }
 
   // One handler for every OptionGroup selector (attachment, feature, generic). A null
@@ -333,18 +337,26 @@ export default function ProductConfigurationPreview() {
               onChange={(decorationMethod) => updateState({ decorationMethod })}
             />
 
-            <ImprintLocationSelector locations={state.locations} onChange={(locations) => updateState({ locations })} />
+            {decorationCaps?.secondLocation ? (
+              <ImprintLocationSelector locations={state.locations} onChange={(locations) => updateState({ locations })} />
+            ) : null}
 
-            <ColorCountSelector colors={state.colors} onChange={(colors) => updateState({ colors })} />
+            {(decorationCaps?.maxColors ?? 1) >= 2 ? (
+              <ColorCountSelector colors={state.colors} onChange={(colors) => updateState({ colors })} />
+            ) : null}
 
-            <DecorationOptionsToggles
-              reverseSide={state.reverseSide}
-              differentReverseArtwork={state.differentReverseArtwork}
-              repeatOrder={state.repeatOrder}
-              onReverseSideChange={(reverseSide) => updateState({ reverseSide })}
-              onDifferentReverseArtworkChange={(differentReverseArtwork) => updateState({ differentReverseArtwork })}
-              onRepeatOrderChange={(repeatOrder) => updateState({ repeatOrder })}
-            />
+            {decorationCaps?.reverseSide || decorationCaps?.repeatOrder ? (
+              <DecorationOptionsToggles
+                showReverseSide={!!decorationCaps?.reverseSide}
+                showRepeatOrder={!!decorationCaps?.repeatOrder}
+                reverseSide={state.reverseSide}
+                differentReverseArtwork={state.differentReverseArtwork}
+                repeatOrder={state.repeatOrder}
+                onReverseSideChange={(reverseSide) => updateState({ reverseSide })}
+                onDifferentReverseArtworkChange={(differentReverseArtwork) => updateState({ differentReverseArtwork })}
+                onRepeatOrderChange={(repeatOrder) => updateState({ repeatOrder })}
+              />
+            ) : null}
 
             <ProductColorSelector
               colors={catalog.productColors}

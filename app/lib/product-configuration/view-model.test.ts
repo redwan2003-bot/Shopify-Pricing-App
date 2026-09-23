@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   buildDefaultConfigurationState,
+  clampDecorationToCapabilities,
+  decorationCapabilitiesFor,
+  friendlyPricingErrorMessage,
   buildCalculationRequestBody,
   buildCalculationFingerprint,
   buildQuoteSummary,
@@ -558,4 +561,41 @@ test("4A.3.1-6 this presentation change cannot trigger recalculation: the finger
   buildSelectedConfigurationRows(buildCatalog(), state, null);
   assert.equal(buildCalculationFingerprint("LNY01", state), noResult, "fingerprint is unchanged by row rendering");
   assert.deepEqual(state, baseState(), "buildSelectedConfigurationRows never mutates the configuration state");
+});
+
+const everything = { colors: 2 as const, locations: 2 as const, reverseSide: true, differentReverseArtwork: true, repeatOrder: true };
+
+test("clampDecorationToCapabilities keeps every selection the method supports", () => {
+  const catalog = buildCatalog();
+  const state = { ...buildDefaultConfigurationState(catalog), decorationMethod: "SCREEN_PRINT", ...everything };
+  assert.equal(clampDecorationToCapabilities(state, catalog), state, "unchanged input returns the same object");
+});
+
+test("clampDecorationToCapabilities resets selections a method has no charge for (Sublimation: repeat order only)", () => {
+  const catalog = buildCatalog({
+    decorationMethods: ["SUBLIMATION"],
+    decorationCapabilities: [{ method: "SUBLIMATION", maxColors: 1, secondLocation: false, reverseSide: false, repeatOrder: true }],
+  });
+  const state = { ...buildDefaultConfigurationState(catalog), decorationMethod: "SUBLIMATION", ...everything };
+  const clamped = clampDecorationToCapabilities(state, catalog);
+  assert.equal(clamped.colors, 1);
+  assert.equal(clamped.locations, 1);
+  assert.equal(clamped.reverseSide, false);
+  assert.equal(clamped.differentReverseArtwork, false);
+  assert.equal(clamped.repeatOrder, true, "the one thing Sublimation does support is kept");
+});
+
+test("clampDecorationToCapabilities allows only base setup when no capabilities are known", () => {
+  const catalog = buildCatalog({ decorationCapabilities: [] });
+  const state = { ...buildDefaultConfigurationState(catalog), decorationMethod: "SCREEN_PRINT", ...everything };
+  const clamped = clampDecorationToCapabilities(state, catalog);
+  assert.deepEqual([clamped.colors, clamped.locations, clamped.reverseSide, clamped.repeatOrder], [1, 1, false, false]);
+  assert.equal(decorationCapabilitiesFor(catalog, "SCREEN_PRINT"), null);
+});
+
+test("friendlyPricingErrorMessage hides internal rule codes but keeps unknown messages", () => {
+  const msg = friendlyPricingErrorMessage("DECORATION_RULE_NOT_FOUND", 'No DecorationRule with code "SETUP_1C1L" configured for method "SCREEN_PRINT"');
+  assert.doesNotMatch(msg, /SETUP_1C1L|DecorationRule/);
+  assert.equal(friendlyPricingErrorMessage("SOMETHING_NEW", "raw text"), "raw text");
+  assert.equal(friendlyPricingErrorMessage(undefined, "raw text"), "raw text");
 });
