@@ -96,6 +96,22 @@ export interface PricingCatalogDecorationColorCharge {
   netPriceCents: number;
 }
 
+/**
+ * What a decoration method can actually price on this profile, derived from the rules the
+ * calculator looks up (see calculator.ts#DECORATION_CODES and the per-color charge table).
+ * Lets the storefront offer only selections that `calculatePrice` can satisfy — a method
+ * with no second-location rule must not offer "2 locations", or every such quote fails.
+ * Informational only: the applied charges still come from a real calculation.
+ */
+export interface PricingCatalogDecorationCapability {
+  method: string;
+  /** Highest color count with a complete set of per-color charges (1 = single color only). */
+  maxColors: number;
+  secondLocation: boolean;
+  reverseSide: boolean;
+  repeatOrder: boolean;
+}
+
 export interface PricingCatalogProductionRule {
   code: string;
   name: string;
@@ -122,6 +138,7 @@ export interface PricingCatalog {
   quantityTiers: PricingCatalogQuantityTier[];
   productColors: PricingCatalogProductColor[];
   decorationMethods: string[];
+  decorationCapabilities: PricingCatalogDecorationCapability[];
   decorationColorCharges: PricingCatalogDecorationColorCharge[];
   optionGroups: PricingCatalogOptionGroup[];
   productionRules: PricingCatalogProductionRule[];
@@ -158,6 +175,22 @@ export async function loadPricingCatalog(
       : null;
 
   const decorationMethods = [...new Set(profile.decorationRules.map((r) => r.method))];
+  const decorationCapabilities: PricingCatalogDecorationCapability[] = decorationMethods.map((method) => {
+    const codes = new Set(profile.decorationRules.filter((r) => r.method === method).map((r) => r.code));
+    const colorNumbers = new Set(
+      profile.decorationColorCharges.filter((c) => c.isActive && c.method === method).map((c) => c.colorNumber),
+    );
+    // The calculator prices colors 2..N and requires every one of them to be configured.
+    let maxColors = 1;
+    while (colorNumbers.has(maxColors + 1)) maxColors += 1;
+    return {
+      method,
+      maxColors,
+      secondLocation: codes.has("SECOND_LOCATION_RUN"),
+      reverseSide: codes.has("REVERSE_SIDE_SETUP"),
+      repeatOrder: codes.has("REPEAT_ORDER_SETUP"),
+    };
+  });
 
   return {
     identity,
@@ -182,6 +215,7 @@ export async function loadPricingCatalog(
         priceAdjustmentCents: c.priceAdjustmentCents,
       })),
     decorationMethods,
+    decorationCapabilities,
     decorationColorCharges: profile.decorationColorCharges
       .filter((c) => c.isActive)
       .sort((a, b) => a.colorNumber - b.colorNumber)

@@ -91,6 +91,41 @@ import {
     return formatMoneyRaw(cents, document.documentElement.lang);
   };
 
+  // The app host can take tens of seconds to answer the first request after being idle, so
+  // a bare fetch either hangs or fails on a cold start. Each attempt gets its own timeout,
+  // and network errors, timeouts and 502/503/504 are retried a few times before giving up.
+  function fetchWithRetry(url, options, attempts, timeoutMs) {
+    var attempt = 0;
+    function once() {
+      attempt += 1;
+      var controller = new AbortController();
+      var timer = window.setTimeout(function () {
+        controller.abort();
+      }, timeoutMs);
+      var opts = {};
+      for (var k in options) if (Object.prototype.hasOwnProperty.call(options, k)) opts[k] = options[k];
+      opts.signal = controller.signal;
+      return fetch(url, opts).then(
+        function (response) {
+          window.clearTimeout(timer);
+          if ([502, 503, 504].indexOf(response.status) !== -1 && attempt < attempts) return retryLater();
+          return response;
+        },
+        function (error) {
+          window.clearTimeout(timer);
+          if (attempt < attempts) return retryLater();
+          throw error;
+        },
+      );
+    }
+    function retryLater() {
+      return new Promise(function (resolve) {
+        window.setTimeout(resolve, 600 * attempt);
+      }).then(once);
+    }
+    return once();
+  }
+
   function t(root, key, fallback) {
     var dict = window.ImprintIdPricingStrings || {};
     return dict[key] || fallback || key;
@@ -549,6 +584,10 @@ import {
     this.els.unavailable.hidden = false;
     this.els.loading.hidden = true;
     this.els.panel.hidden = true;
+    // No usable catalog (e.g. a product with no pricing profile): ask the server whether
+    // this product is actually enforced. Only an explicit `bypass` releases the theme's own
+    // purchase buttons; any other answer keeps them contained (fail closed).
+    this.probeEnforcementState();
   };
 
   /**
@@ -588,6 +627,9 @@ import {
         if (self.destroyed || seq !== self._policyProbeSeq || probeProductId !== self.shopifyProductId) return;
         if (!body || body.ok !== true || !body.data || !body.data.enforcement) return; // malformed → stay contained
         self.updateEnforcementState(body.data.enforcement.state);
+        // An unenforced product with no usable pricing panel has nothing to show: hide the
+        // block (and its "unavailable" notice) so the theme's own purchase flow is the page.
+        if (body.data.enforcement.state === "bypass" && self.els.panel.hidden) self.root.hidden = true;
       })
       .catch(function () {
         self._policyProbeInFlight = false; // network error → stay contained
@@ -599,10 +641,19 @@ import {
     if (isInitialLoad) {
       this.els.loading.hidden = false;
       this.els.panel.hidden = true;
+      // After a few seconds, say why it is taking a while instead of looking frozen.
+      var self = this;
+      window.clearTimeout(this._slowLoadTimer);
+      this._slowLoadTimer = window.setTimeout(function () {
+        if (!self.els.loading.hidden) {
+          self.els.loading.textContent = t(self.root, "dynamic_pricing.loading_slow", "Still loading. The first request after a quiet period can take a little longer.");
+        }
+      }, 6000);
     }
   };
 
   PricingBlock.prototype.hideLoading = function () {
+    window.clearTimeout(this._slowLoadTimer);
     this.root.removeAttribute("data-loading");
     this.els.loading.hidden = true;
   };
@@ -620,91 +671,6 @@ import {
    * one.
    */
   
-  PricingBlock.prototype.loadFallbackCatalog = function (requestProductId, requestVariantId, requestVariantSku, skipCrossCheck) {
-    var raw = null;
-    var scriptEl = this.root.querySelector('script[data-imprintid-embedded-catalog]');
-    if (scriptEl && scriptEl.textContent) {
-      try { raw = JSON.parse(scriptEl.textContent.trim()); } catch (e) { console.warn('Embedded catalog parse error:', e); }
-    }
-    if (!raw && this.root.dataset.embeddedCatalog) {
-      try { raw = JSON.parse(this.root.dataset.embeddedCatalog); } catch (e) {}
-    }
-    if (raw) {
-      if (raw.identity) {
-        raw.identity.shopifyVariantId = requestVariantId || raw.identity.shopifyVariantId;
-      }
-      this.catalog = raw;
-      this.catalogSku = requestVariantSku;
-      this.renderCatalog();
-      this.hideLoading();
-      this.els.panel.hidden = false;
-      this.recalculateNow(skipCrossCheck);
-      return true;
-    }
-    return false;
-  };
-
-  PricingBlock.prototype.computeLocalQuote = function (quantity) {
-    if (!this.catalog || !this.catalog.quantityTiers || !this.catalog.quantityTiers.length) return null;
-    var tiers = this.catalog.quantityTiers;
-    var selectedTier = tiers[0];
-    for (var i = 0; i < tiers.length; i++) {
-      if (quantity >= tiers[i].minQuantity && (tiers[i].maxQuantity === null || quantity <= tiers[i].maxQuantity)) {
-        selectedTier = tiers[i];
-      }
-    }
-    var listUnit = selectedTier.listUnitPriceCents;
-    var netUnit = selectedTier.netUnitPriceCents;
-    var optionsListAdj = 0;
-    var optionsNetAdj = 0;
-    if (this.els.options) {
-      var selects = this.els.options.querySelectorAll('select');
-      for (var s = 0; s < selects.length; s++) {
-        var opt = selects[s].options[selects[s].selectedIndex];
-        if (opt && opt.dataset.priceCents) {
-          var adj = parseInt(opt.dataset.priceCents, 10) || 0;
-          optionsListAdj += adj;
-          optionsNetAdj += adj;
-        }
-      }
-    }
-    var decorSetup = 4500;
-    var decorRun = 0;
-    if (this.els.colors && parseInt(this.els.colors.value, 10) > 1) {
-      decorSetup += 3500;
-      decorRun += 25;
-    }
-    var unitPriceList = listUnit + optionsListAdj + decorRun;
-    var unitPriceNet = netUnit + optionsNetAdj + decorRun;
-    var totalListCents = unitPriceList * quantity + decorSetup;
-    var totalNetCents = unitPriceNet * quantity + decorSetup;
-
-    return {
-      identity: {
-        shopifyProductId: this.shopifyProductId,
-        shopifyVariantId: this.selectedVariantId,
-        resolutionSource: 'product_override'
-      },
-      base: {
-        listUnitPriceCents: unitPriceList,
-        netUnitPriceCents: unitPriceNet
-      },
-      totals: {
-        listTotalCents: totalListCents,
-        netTotalCents: totalNetCents
-      },
-      quantityTier: selectedTier,
-      availableQuantityTiers: tiers,
-      breakdown: {
-        unitPriceCents: unitPriceNet,
-        setupCents: decorSetup,
-        runCents: decorRun * quantity,
-        optionsCents: optionsNetAdj * quantity
-      },
-      cartPricing: null
-    };
-  };
-
   PricingBlock.prototype.fetchCatalog = function (skipCrossCheck) {
     if (!this.canUseDynamicPricing()) {
       this.failClosedForSync();
@@ -722,7 +688,7 @@ import {
     var requestVariantId = this.selectedVariantId;
     var requestVariantSku = this.selectedVariantSku;
 
-    fetch(url, { headers: { Accept: "application/json" } })
+    fetchWithRetry(url, { headers: { Accept: "application/json" } }, 3, 30000)
       .then(function (response) {
         return response.json().then(function (body) {
           return { status: response.status, body: body };
@@ -737,7 +703,6 @@ import {
           self.updateEnforcementState(result.body.data.enforcement && result.body.data.enforcement.state);
         }
         if (!result.body || result.body.ok !== true) {
-          if (self.loadFallbackCatalog(requestProductId, requestVariantId, requestVariantSku, skipCrossCheck)) return;
           self.showUnavailable();
           return;
         }
@@ -745,7 +710,6 @@ import {
         // matching `identity` too — otherwise fail closed rather than render controls
         // for the wrong product/variant.
         if (!self.responseIdentityOk(result.body.data && result.body.data.identity, requestProductId, requestVariantId)) {
-          if (self.loadFallbackCatalog(requestProductId, requestVariantId, requestVariantSku, skipCrossCheck)) return;
           self.renderIdentityFailure();
           return;
         }
@@ -758,9 +722,51 @@ import {
       })
       .catch(function () {
         if (seq !== self.catalogFetchSeq) return;
-        if (self.loadFallbackCatalog(requestProductId, requestVariantId, requestVariantSku, skipCrossCheck)) return;
         self.showUnavailable();
       });
+  };
+
+  // Shows only the decoration controls the chosen method's pricing rules can satisfy
+  // (`capabilities` comes from the catalog's `decorationCapabilities`). Anything not offered
+  // is reset to its neutral value, because the request body always reads every control.
+  // `null` (an older server without capabilities) offers only the base setup — the one
+  // configuration every decorated profile can price — rather than guessing.
+  PricingBlock.prototype.applyDecorationCapabilities = function (capabilities) {
+    var els = this.els;
+    var caps = capabilities || { maxColors: 1, secondLocation: false, reverseSide: false, repeatOrder: false };
+    var fieldOf = function (control) {
+      return control && control.closest ? control.closest(".imprintid-pricing__field") : null;
+    };
+    var setShown = function (control, shown) {
+      var field = fieldOf(control);
+      if (field) field.hidden = !shown;
+    };
+
+    // Colors: 1..maxColors.
+    els.colors.replaceChildren();
+    for (var n = 1; n <= caps.maxColors; n++) {
+      var opt = document.createElement("option");
+      opt.value = String(n);
+      opt.textContent = n === 1 ? t(this.root, "dynamic_pricing.colors_one", "1 color") : n === 2 ? t(this.root, "dynamic_pricing.colors_two", "2 colors") : n + " colors";
+      els.colors.appendChild(opt);
+    }
+    els.colors.value = "1";
+    setShown(els.colors, caps.maxColors > 1);
+
+    if (!caps.secondLocation) els.locations.value = "1";
+    setShown(els.locations, caps.secondLocation);
+
+    if (!caps.reverseSide) {
+      els.reverseSide.checked = false;
+      els.reverseArtwork.checked = false;
+      els.reverseArtworkWrap.hidden = true;
+    }
+    setShown(els.reverseSide, caps.reverseSide);
+
+    if (!caps.repeatOrder) els.repeatOrder.checked = false;
+    setShown(els.repeatOrder, caps.repeatOrder);
+
+    els.decorationFieldset.hidden = !(caps.maxColors > 1 || caps.secondLocation || caps.reverseSide || caps.repeatOrder);
   };
 
   PricingBlock.prototype.renderCatalog = function () {
@@ -793,9 +799,17 @@ import {
       this.els.colorWrap.hidden = true;
     }
 
-    // Decoration: only shown at all if the profile has a decoration method configured.
+    // Decoration: only shown at all if the profile has a decoration method configured, and
+    // then only the selections that method's pricing rules can actually satisfy — offering
+    // e.g. "2 locations" on a method with no second-location charge makes every quote fail.
     if (catalog.decorationMethods.length) {
       this.decorationMethod = catalog.decorationMethods[0];
+      var capabilities = null;
+      var capabilityList = catalog.decorationCapabilities || [];
+      for (var ci = 0; ci < capabilityList.length; ci++) {
+        if (capabilityList[ci].method === this.decorationMethod) capabilities = capabilityList[ci];
+      }
+      this.applyDecorationCapabilities(capabilities);
     } else {
       this.els.decorationFieldset.hidden = true;
       this.decorationMethod = null;
@@ -1228,11 +1242,6 @@ import {
         if (err && err.name === "AbortError") return;
         if (seq !== self.requestSeq) return;
         self.hideLoading();
-        var local = self.computeLocalQuote(requestQuantity);
-        if (local) {
-          self.renderResult(local, requestProductId, requestVariantId, requestVariantSku, requestQuantity);
-          return;
-        }
         self.renderError(null);
       });
   };
@@ -1890,10 +1899,13 @@ import {
     var mine = "shopify-section-" + this._sectionId;
     var node = el;
     while (node && node.nodeType === 1) {
-      if (node.id === mine) return true;
+      // getAttribute, not `.id`: on a <form> that contains an <input name="id"> (every
+      // Shopify product form does), `form.id` is that input element, not the id string.
+      var nodeId = node.getAttribute ? node.getAttribute("id") : null;
+      if (nodeId === mine) return true;
       var marked = node.getAttribute ? node.getAttribute("data-section-id") : null;
       if (marked && node !== this.root) return marked === this._sectionId;
-      if (node.id && node.id.indexOf("shopify-section-") === 0) return node.id === mine;
+      if (nodeId && nodeId.indexOf("shopify-section-") === 0) return nodeId === mine;
       node = node.parentNode;
     }
     return true;

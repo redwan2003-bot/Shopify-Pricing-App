@@ -34,6 +34,12 @@
   box-sizing: inherit;
 }
 
+/* Author `display` rules (e.g. the flex panel) otherwise beat the UA `[hidden]` rule, so
+   a "hidden" panel, fieldset or message would still render. */
+.imprintid-pricing [hidden] {
+  display: none !important;
+}
+
 .imprintid-pricing__heading {
   display: none;
 }
