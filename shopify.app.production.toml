@@ -31,6 +31,12 @@ api_version = "2026-07"
   uri = "/webhooks/products/delete"
   topics = [ "products/delete" ]
 
+  # Mandatory privacy webhooks for public apps: customer data request, customer erasure and
+  # shop erasure. Handled in app/routes/webhooks.compliance.tsx.
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/compliance"
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+
 [access_scopes]
 scopes = "write_products,write_cart_transforms,write_validations"
 
