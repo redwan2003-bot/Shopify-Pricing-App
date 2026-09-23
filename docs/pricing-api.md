@@ -83,10 +83,10 @@ recalculated, or rounded:
     "quantityTier": { "id": "...", "minQuantity": 1000, "maxQuantity": 2999, "listUnitPriceCents": 164, "netUnitPriceCents": 98 },
     "base": { "quantity": 1000, "listUnitPriceCents": 164, "netUnitPriceCents": 98, "listSubtotalCents": 164000, "netSubtotalCents": 98000 },
     "decoration": { "method": "SCREEN_PRINT", "charges": [ /* itemized lines, list+net each */ ], "listChargesCents": 67000, "netChargesCents": 53600 },
-    "options": { "selections": [ /* ... */ ], "chargesCents": 25 },
+    "options": { "selections": [ /* ... */ ], "perUnitChargesCents": 25, "netPerUnitChargesCents": 25, "chargesCents": 25000, "netChargesCents": 25000 },
     "production": { "code": "RUSH", "isRush": true, "minBusinessDays": 5, "maxBusinessDays": 5, "relatedSku": "LNY5RSH01", "feeCents": null, "notes": null },
     "packaging": { "code": "STANDARD_CARTON", "unitsPerPackage": 250, "cartonWeightLbs": 8.5, "lengthIn": 12, "widthIn": 8, "heightIn": 6, "feeCents": null },
-    "totals": { "listTotalCents": 233525, "netTotalCents": 153625 }
+    "totals": { "listTotalCents": 258500, "netTotalCents": 178600 }
   }
 }
 ```
@@ -180,8 +180,8 @@ Content-Type: application/json
 }
 ```
 
-Verified live (`handler.test.ts`) to return `totals: { listTotalCents: 233525,
-netTotalCents: 153625 }` against the real seeded LNY01 profile — the exact figures
+Verified live (`handler.test.ts`) to return `totals: { listTotalCents: 258500,
+netTotalCents: 178600 }` against the real seeded LNY01 profile — the exact figures
 documented in `docs/pricing-engine.md` §12.
 
 ## 10. Example successful response

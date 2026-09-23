@@ -273,11 +273,14 @@ export interface OptionSelectionResult {
 
 export interface OptionsResult {
   selections: OptionSelectionResult[];
-  /** Sum of each selection's (list) `priceAdjustmentCents` — feeds `totals.listTotalCents`. */
+  /** Sum of each selection's list `priceAdjustmentCents`, per piece. */
+  perUnitChargesCents: number;
+  /** Sum of each selection's `netPriceAdjustmentCents`, per piece — what is charged for each
+   * unit. Equal to `perUnitChargesCents` unless a selected option has a distinct net price. */
+  netPerUnitChargesCents: number;
+  /** `perUnitChargesCents` x quantity — the order-level list amount; feeds `totals.listTotalCents`. */
   chargesCents: number;
-  /** Sum of each selection's `netPriceAdjustmentCents` — feeds `totals.netTotalCents`.
-   * Equal to `chargesCents` unless at least one selected option carries a distinct net
-   * price (see `OptionValueData.netPriceAdjustmentCents`). */
+  /** `netPerUnitChargesCents` x quantity — the order-level net amount; feeds `totals.netTotalCents`. */
   netChargesCents: number;
 }
 

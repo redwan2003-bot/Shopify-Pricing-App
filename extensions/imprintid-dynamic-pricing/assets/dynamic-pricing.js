@@ -852,7 +852,9 @@ import {
         // app/lib/pricing/calculator.ts#resolveOptionValuePrice via
         // app/lib/pricing-api/catalog.ts) — this only formats that already-decided
         // number, it does not decide which of value/category price applies.
-        option.textContent = this.formatOptionLabel(value.label, classifyResolvedPriceCents(value.resolvedPriceCents));
+        // The customer is charged the NET price, per piece, so that is the figure shown.
+        var shownCents = typeof value.resolvedNetPriceCents === "number" ? value.resolvedNetPriceCents : value.resolvedPriceCents;
+        option.textContent = this.formatOptionLabel(value.label, classifyResolvedPriceCents(shownCents));
         select.appendChild(option);
       }, this);
 
@@ -1103,7 +1105,7 @@ import {
   PricingBlock.prototype.formatOptionLabel = function (label, priceDescription) {
     if (priceDescription.kind === "priced") {
       var sign = priceDescription.cents > 0 ? "+" : "";
-      return label + " — " + sign + formatMoney(priceDescription.cents);
+      return label + " — " + sign + formatMoney(priceDescription.cents) + " / unit";
     }
     if (priceDescription.kind === "included") {
       return label + " — " + t(this.root, "dynamic_pricing.option_included", "Included");
@@ -1507,7 +1509,7 @@ import {
       addRow("dynamic_pricing.breakdown_decoration", "Decoration", data.decoration.netChargesCents);
     }
     if (data.options && data.options.selections.length) {
-      addRow("dynamic_pricing.breakdown_options", "Options", data.options.chargesCents);
+      addRow("dynamic_pricing.breakdown_options", "Options", data.options.netChargesCents);
     }
     if (data.production) {
       addRow("dynamic_pricing.breakdown_production", "Production", data.production.feeCents || 0);

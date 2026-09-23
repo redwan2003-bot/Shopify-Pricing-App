@@ -126,8 +126,9 @@ test("a full LNY01 request (decoration + options + production) returns a fully i
   assert.equal(result.status, 200);
   assert.equal(result.body.ok, true);
   if (result.body.ok) {
-    assert.equal(result.body.data.totals.listTotalCents, 233525);
-    assert.equal(result.body.data.totals.netTotalCents, 153625);
+    // Options are per piece: the Cell Phone Loop adds 25c x 1000 (was a flat 25c: 233525 / 153625).
+    assert.equal(result.body.data.totals.listTotalCents, 258500);
+    assert.equal(result.body.data.totals.netTotalCents, 178600);
     assert.equal(result.body.data.production.code, "RUSH");
   }
 });

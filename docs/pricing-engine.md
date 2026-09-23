@@ -97,11 +97,7 @@ Never collapsed. `QuantityTierResult`, `BasePriceResult`, and every
 given customer is a decision for the (not-yet-built) storefront/API layer, not this
 engine.
 
-The one exception: `OptionsResult.chargesCents` is a single number, because
-`OptionValue.priceAdjustmentCents` and `OptionGroup.categoryPriceAdjustmentCents` are
-themselves single fields in the schema (the source sheet never gave separate list/net
-prices for attachments/features) — that one adjustment is added to both
-`totals.listTotalCents` and `totals.netTotalCents` identically.
+Options carry a single price adjustment (with an optional distinct net figure) rather than separate list/net rate tables; see section 6 for how it scales with quantity.
 
 ## 5. Decoration calculation
 
@@ -165,6 +161,13 @@ Price precedence, matching exactly how Phase 2.2 structured the data:
 3. Else → `OptionPricingUnavailable`. **Never** silently charged as `$0` — a `null` in
    either field means "no price was supplied," not "free" (Phase 2.2's own
    distinction; see `docs/pricing-architecture.md` §7).
+
+**Option prices are per piece.** An attachment or feature upcharge applies to every unit ordered
+(confirmed with the business), so each selection contributes `adjustment x quantity` to the order.
+`OptionsResult` therefore carries both views: `perUnitChargesCents` / `netPerUnitChargesCents` (the
+per-piece sums, list and net) and `chargesCents` / `netChargesCents` (those sums x quantity, the
+amounts added to `totals.listTotalCents` / `totals.netTotalCents`). The customer is charged the NET
+figure, and the signed cart quote carries it in `perUnitSurchargeCents`.
 
 Two selections for the same group are rejected (`DuplicateOptionSelection`) — a
 customer picks one attachment style, not two. A group with `isRequired: true` and no
@@ -250,7 +253,7 @@ Additional color run         list   $0.25 × 1000 = $250.00     net   $0.20 × 1
 2nd location run             list   $0.30 × 1000 = $300.00     net   $0.24 × 1000 = $240.00
 Reverse side setup           list  $40.00                      net  $32.00
 Repeat order setup           list  $25.00                      net  $20.00
-Cell Phone Loop option                       $0.25 (both)
+Cell Phone Loop option (per piece)  $0.25 × 1000 = $250.00      $0.25 × 1000 = $250.00
 Rush production                              — (no fee configured)
 Packaging (standard carton)                  — (no fee configured)
 ──────────────────────────────────────────────────────────────────────────

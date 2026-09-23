@@ -261,7 +261,10 @@ function transformProfile(
   const optionGroups: OptionGroupInput[] = (Array.isArray(profile.optionGroups) ? profile.optionGroups : []).map(
     (group, groupIndex) => ({
       name: group.name,
-      kind: OptionGroupKind.GENERIC,
+      // The storefront shows ATTACHMENT groups in their own "Attachments" panel and everything
+      // else under "Optional Features", keyed off this kind — GENERIC for all of them lumped
+      // every attachment under the wrong heading.
+      kind: /attachment/i.test(group.name) ? OptionGroupKind.ATTACHMENT : OptionGroupKind.FEATURE,
       sortOrder: groupIndex,
       categoryPriceAdjustmentCents: null,
       values: (Array.isArray(group.options) ? group.options : []).map((option, valueIndex) => ({

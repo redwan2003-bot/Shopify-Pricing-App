@@ -250,6 +250,7 @@ export function resolveOptionValuePrice(
 function resolveOptions(
   profile: PricingProfileData,
   selections: OptionSelectionInput[],
+  quantity: number,
 ): OptionsResult {
   const results: OptionSelectionResult[] = [];
   const seenGroupNames = new Set<string>();
@@ -302,9 +303,17 @@ function resolveOptions(
     }
   }
 
-  const chargesCents = results.reduce((sum, r) => sum + r.priceAdjustmentCents, 0);
-  const netChargesCents = results.reduce((sum, r) => sum + r.netPriceAdjustmentCents, 0);
-  return { selections: results, chargesCents, netChargesCents };
+  // Option prices are PER PIECE (confirmed: an attachment or feature upcharge applies to every
+  // unit ordered), so the order total is the per-unit sum times the quantity.
+  const perUnitChargesCents = results.reduce((sum, r) => sum + r.priceAdjustmentCents, 0);
+  const netPerUnitChargesCents = results.reduce((sum, r) => sum + r.netPriceAdjustmentCents, 0);
+  return {
+    selections: results,
+    perUnitChargesCents,
+    netPerUnitChargesCents,
+    chargesCents: perUnitChargesCents * quantity,
+    netChargesCents: netPerUnitChargesCents * quantity,
+  };
 }
 
 /**
@@ -445,7 +454,7 @@ export function calculatePricingFromProfile(
   const decoration = input.decoration
     ? resolveDecoration(profile, input.decoration, input.quantity)
     : null;
-  const options = resolveOptions(profile, input.options ?? []);
+  const options = resolveOptions(profile, input.options ?? [], input.quantity);
   const production = resolveProduction(profile, input.production);
   const packaging = resolvePackaging(profile, input.packaging);
 

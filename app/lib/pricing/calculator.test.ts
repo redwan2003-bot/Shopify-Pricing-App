@@ -605,7 +605,9 @@ describe("options", () => {
     });
     assert.equal(r.options.selections[0]!.source, "option");
     assert.equal(r.options.selections[0]!.priceAdjustmentCents, 25);
-    assert.equal(r.options.chargesCents, 25);
+    // Option prices are per piece: 25c x 100 units.
+    assert.equal(r.options.perUnitChargesCents, 25);
+    assert.equal(r.options.chargesCents, 25 * 100);
   });
 
   test("21. multiple option selections sum across groups", () => {
@@ -617,7 +619,26 @@ describe("options", () => {
       ],
     });
     assert.equal(r.options.selections.length, 2);
-    assert.equal(r.options.chargesCents, 0 + 30);
+    assert.equal(r.options.perUnitChargesCents, 0 + 30);
+    assert.equal(r.options.chargesCents, (0 + 30) * 100);
+  });
+
+  test("21b. option surcharges are per piece, and list and net scale separately with quantity", () => {
+    const withNet = {
+      ...profile,
+      optionGroups: profile.optionGroups.map((g) => ({
+        ...g,
+        optionValues: g.optionValues.map((v) => (v.id === "ov_buckle" ? { ...v, netPriceAdjustmentCents: 23 } : v)),
+      })),
+    };
+    const r = calculatePricingFromProfile(withNet, SOURCE, {
+      ...noDecoration(200),
+      options: [{ groupName: "Optional Features", optionValueId: "ov_buckle" }],
+    });
+    assert.equal(r.options.perUnitChargesCents, 30);
+    assert.equal(r.options.netPerUnitChargesCents, 23);
+    assert.equal(r.totals.listTotalCents - r.base.listSubtotalCents, 30 * 200);
+    assert.equal(r.totals.netTotalCents - r.base.netSubtotalCents, 23 * 200);
   });
 
   test("22. an unknown option group is rejected", () => {

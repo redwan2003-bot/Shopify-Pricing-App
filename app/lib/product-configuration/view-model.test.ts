@@ -330,7 +330,7 @@ function resultFixture(overrides: Partial<PricingCalculationResult> = {}): Prici
     base: { quantity: 100, listUnitPriceCents: 229, netUnitPriceCents: 137, listSubtotalCents: 22900, netSubtotalCents: 13700 },
     productColor: null,
     decoration: null,
-    options: { selections: [], chargesCents: 0, netChargesCents: 0 },
+    options: { selections: [], perUnitChargesCents: 0, netPerUnitChargesCents: 0, chargesCents: 0, netChargesCents: 0 },
     production: {
       code: "STANDARD",
       name: "Standard Production",

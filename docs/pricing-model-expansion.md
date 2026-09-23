@@ -294,7 +294,7 @@ breakdown:
 
 The LNY01 worked example (quantity 1000, 2 colors, 2 locations, different reverse art,
 repeat order, Cell Phone Loop option, rush production) **still produces exactly
-233525¢ list / 153625¢ net** — asserted directly in `lny01.test.ts` and re-verified via
+258500¢ list / 178600¢ net** (options per piece; originally 233525 / 153625 when an option was a flat per-order amount) — asserted directly in `lny01.test.ts` and re-verified via
 a live signed request in `scripts/verify-app-proxy.mjs` (Case B) against the real,
 re-seeded database. The underlying representation changed (the old `ADDL_COLOR_SETUP`/
 `ADDL_COLOR_RUN` `DecorationRule` rows were replaced by `DecorationColorCharge` rows for

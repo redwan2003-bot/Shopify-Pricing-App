@@ -148,21 +148,21 @@ test("LNY01 full configuration: 2 colors, 2 locations, different reverse art, re
   assert.equal(result.decoration!.listChargesCents, expectedListDecoration);
   assert.equal(result.decoration!.netChargesCents, expectedNetDecoration);
 
-  assert.equal(result.options.chargesCents, 25); // Cell Phone Loop: +$0.25
+  assert.equal(result.options.chargesCents, 25 * quantity); // Cell Phone Loop: +$0.25 per piece
   assert.equal(result.production.code, "RUSH");
   assert.equal(result.production.relatedSku, "LNY5RSH01");
   assert.equal(result.production.minBusinessDays, 5);
 
   const listUnit = result.base.listUnitPriceCents;
   const netUnit = result.base.netUnitPriceCents;
-  const listTotal = listUnit * quantity + expectedListDecoration + 25;
-  const netTotal = netUnit * quantity + expectedNetDecoration + 25;
+  const listTotal = listUnit * quantity + expectedListDecoration + 25 * quantity;
+  const netTotal = netUnit * quantity + expectedNetDecoration + 25 * quantity;
 
-  // The exact figures independently verified in Phases 2.3, 2.4, 2.5, and 2.6 — this
-  // is the literal regression proof Phase 2.7 requires: same total, transformed
-  // representation.
-  assert.equal(listTotal, 233525);
-  assert.equal(netTotal, 153625);
+  // Phases 2.3-2.7 verified 233525 / 153625 here, when an option was a flat per-order amount.
+  // Options are now per piece, so the Cell Phone Loop adds 25c x 1000 instead of 25c once:
+  // 233525 - 25 + 25000 = 258500 list, 153625 - 25 + 25000 = 178600 net.
+  assert.equal(listTotal, 258500);
+  assert.equal(netTotal, 178600);
   assert.equal(result.totals.listTotalCents, listTotal);
   assert.equal(result.totals.netTotalCents, netTotal);
 });

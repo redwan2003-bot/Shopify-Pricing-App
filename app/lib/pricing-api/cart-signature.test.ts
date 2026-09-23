@@ -26,7 +26,7 @@ function buildResult(overrides: Partial<PricingCalculationResult> = {}): Pricing
       listChargesCents: 33000,
       netChargesCents: 26400,
     },
-    options: { selections: [], chargesCents: 0, netChargesCents: 0 },
+    options: { selections: [], perUnitChargesCents: 0, netPerUnitChargesCents: 0, chargesCents: 0, netChargesCents: 0 },
     production: { code: "RUSH", name: "Rush", isRush: true, minBusinessDays: 5, maxBusinessDays: 5, relatedSku: null, feeCents: null, notes: null },
     packaging: null,
     totals: { listTotalCents: 197000, netTotalCents: 124400 },
@@ -48,23 +48,48 @@ test("buildCartPricingPayload decomposition sums exactly back to totals.netTotal
   assert.equal(payload.flatSurchargeCents, 3600 + 2800); // SETUP_1C1L + COLOR_2_SETUP, no production/packaging/options here
 });
 
-test("buildCartPricingPayload includes options/production/packaging/color in the flat component, never per-unit", () => {
+test("buildCartPricingPayload puts option surcharges per piece and production/packaging/color in the flat component", () => {
   const result = buildResult({
     decoration: null,
     productColor: { code: "ROYAL", name: "Royal Blue", priceCode: null, priceAdjustmentCents: 15 },
-    options: { selections: [{ groupName: "Optional Features", optionValueId: "ov1", optionLabel: "Cell Phone Loop", source: "option", priceAdjustmentCents: 25, netPriceAdjustmentCents: 25 }], chargesCents: 25, netChargesCents: 25 },
+    options: {
+      selections: [{ groupName: "Optional Features", optionValueId: "ov1", optionLabel: "Cell Phone Loop", source: "option", priceAdjustmentCents: 25, netPriceAdjustmentCents: 25 }],
+      perUnitChargesCents: 25,
+      netPerUnitChargesCents: 25,
+      chargesCents: 25 * 1000,
+      netChargesCents: 25 * 1000,
+    },
     production: { code: "RUSH", name: "Rush", isRush: true, minBusinessDays: 5, maxBusinessDays: 5, relatedSku: null, feeCents: 500, notes: null },
     packaging: { code: "STANDARD_CARTON", name: "Standard Carton", unitsPerPackage: 250, cartonWeightLbs: 8.5, lengthIn: 12, widthIn: 8, heightIn: 6, feeCents: 100 },
-    totals: { listTotalCents: 164000, netTotalCents: 98000 + 15 + 25 + 500 + 100 },
+    totals: { listTotalCents: 164000, netTotalCents: 98000 + 15 + 25 * 1000 + 500 + 100 },
   });
   const payload = buildCartPricingPayload(result, "USD", "gid://shopify/ProductVariant/1", "gid://shopify/ProductVariant/2", 1000);
 
-  assert.equal(payload.perUnitSurchargeCents, 0);
-  assert.equal(payload.flatSurchargeCents, 15 + 25 + 500 + 100);
+  assert.equal(payload.perUnitSurchargeCents, 25, "the option is charged for every piece");
+  assert.equal(payload.flatSurchargeCents, 15 + 500 + 100, "color, production and packaging stay one-time");
   assert.equal(
     payload.baseUnitPriceCents * payload.quantity + payload.perUnitSurchargeCents * payload.quantity + payload.flatSurchargeCents,
     result.totals.netTotalCents,
   );
+});
+
+test("the signed quote charges options at their NET price per piece, matching the displayed net total", () => {
+  // Heavy Duty attachment: list 31c / net 23c per piece. A signed quote at the list price would
+  // charge more than the customer was shown.
+  const result = buildResult({
+    decoration: null,
+    options: {
+      selections: [{ groupName: "Heavy Duty Attachment", optionValueId: "ov2", optionLabel: "Oval Hook", source: "option", priceAdjustmentCents: 31, netPriceAdjustmentCents: 23 }],
+      perUnitChargesCents: 31,
+      netPerUnitChargesCents: 23,
+      chargesCents: 31 * 1000,
+      netChargesCents: 23 * 1000,
+    },
+    totals: { listTotalCents: 164000 + 31 * 1000, netTotalCents: 98000 + 23 * 1000 },
+  });
+  const v1 = buildCartPricingPayload(result, "USD", "gid://shopify/ProductVariant/1", "gid://shopify/ProductVariant/2", 1000);
+  assert.equal(v1.perUnitSurchargeCents, 23);
+  assert.equal(v1.baseUnitPriceCents * v1.quantity + v1.perUnitSurchargeCents * v1.quantity + v1.flatSurchargeCents, result.totals.netTotalCents);
 });
 
 test("buildCartPricingPayload sets expiresAt 30 minutes from the given `now`", () => {

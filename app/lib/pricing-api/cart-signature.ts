@@ -34,12 +34,14 @@ import {
  *   - `baseUnitPriceCents`      = `base.netUnitPriceCents`                 (exact, per unit)
  *   - `perUnitSurchargeCents`   = sum of every PER_UNIT DecorationChargeLine's
  *                                 `netPriceCents` (the rate itself, not the line total —
- *                                 exact, per unit)
+ *                                 exact, per unit), plus every selected option's
+ *                                 `netPriceAdjustmentCents` (option surcharges are per piece,
+ *                                 charged at their NET price: `options.netPerUnitChargesCents`)
  *   - `flatSurchargeCents`      = sum of every ONE_TIME DecorationChargeLine's
- *                                 `netLineTotalCents`, plus `options.chargesCents`,
- *                                 `production.feeCents`, `packaging.feeCents`, and
- *                                 `productColor.priceAdjustmentCents` (all flat/one-time
- *                                 by construction in this engine — see calculator.ts)
+ *                                 `netLineTotalCents`, plus `production.feeCents`,
+ *                                 `packaging.feeCents`, and `productColor.priceAdjustmentCents`
+ *                                 (all flat/one-time by construction in this engine — see
+ *                                 calculator.ts)
  *
  * `baseUnitPriceCents * quantity + perUnitSurchargeCents * quantity + flatSurchargeCents`
  * is algebraically identical to `totals.netTotalCents` — this is a re-grouping of the
@@ -108,7 +110,7 @@ export function buildCartPricingPayload(
     }
   }
 
-  flatSurchargeCents += result.options.chargesCents;
+  perUnitSurchargeCents += result.options.netPerUnitChargesCents;
   flatSurchargeCents += result.production.feeCents ?? 0;
   flatSurchargeCents += result.packaging?.feeCents ?? 0;
   flatSurchargeCents += result.productColor?.priceAdjustmentCents ?? 0;
@@ -303,7 +305,7 @@ export function buildCartPricingPayloadV2(args: BuildCartPricingPayloadV2Args): 
       else flatSurchargeCents += line.netLineTotalCents;
     }
   }
-  flatSurchargeCents += result.options.chargesCents;
+  perUnitSurchargeCents += result.options.netPerUnitChargesCents;
   flatSurchargeCents += result.production.feeCents ?? 0;
   flatSurchargeCents += result.packaging?.feeCents ?? 0;
   flatSurchargeCents += result.productColor?.priceAdjustmentCents ?? 0;

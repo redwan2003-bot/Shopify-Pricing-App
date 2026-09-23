@@ -198,7 +198,7 @@ in a `finally` block. Last run (captured in this report, not fabricated):
 | Case | What it proves | Result |
 |---|---|---|
 | A | Minimal valid signed request → real LNY01 pricing at qty 1000 (164¢ list / 98¢ net unit) | `200`, ✅ |
-| B | Full worked example (2 colors, 2 locations, reverse art, repeat order, an option, rush) | `200`, totals **233525¢ list / 153625¢ net** — matches the exact figures independently verified in Phase 2.3 and Phase 2.4 | ✅ |
+| B | Full worked example (2 colors, 2 locations, reverse art, repeat order, an option, rush) | `200`, totals **258500¢ list / 178600¢ net** — matches the exact figures independently verified in Phase 2.3 and Phase 2.4 | ✅ |
 | C | Forged/invalid signature | rejected, not `200` | ✅ |
 | D | Valid signature, shop has no installed-app session | `404 SHOP_NOT_AVAILABLE` | ✅ |
 

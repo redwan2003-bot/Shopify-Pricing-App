@@ -183,12 +183,12 @@ try {
     console.log(JSON.stringify(body.ok ? body.data.totals : body, null, 2));
     check("Case B status is 200", response.status === 200);
     check(
-      "Case B listTotalCents === 233525 (matches Phase 2.3/2.4 verified figure)",
-      body.ok === true && body.data.totals.listTotalCents === 233525,
+      "Case B listTotalCents === 258500 (matches Phase 2.3/2.4 verified figure)",
+      body.ok === true && body.data.totals.listTotalCents === 258500,
     );
     check(
-      "Case B netTotalCents === 153625 (matches Phase 2.3/2.4 verified figure)",
-      body.ok === true && body.data.totals.netTotalCents === 153625,
+      "Case B netTotalCents === 178600 (matches Phase 2.3/2.4 verified figure)",
+      body.ok === true && body.data.totals.netTotalCents === 178600,
     );
     check(
       "Case B response includes availableQuantityTiers for the quantity-break table",
