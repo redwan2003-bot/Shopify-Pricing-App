@@ -174,6 +174,9 @@ export default function Index() {
       </s-section>
 
       <s-section heading="Enforcement">
+        <s-paragraph>
+          <s-link href="/app/settings">Change in Settings</s-link>
+        </s-paragraph>
         {data.enforcement.state === "configured" ? (
           <s-stack direction="block" gap="base">
             <s-paragraph>
