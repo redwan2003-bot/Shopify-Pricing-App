@@ -41,7 +41,7 @@ test("planPolicyWrites only queues products whose policy is not already correct"
     ["gid://shopify/Product/3", null], // missing
     ["gid://shopify/Product/4", "garbage"], // malformed
   ]);
-  const plan = planPolicyWrites(matched, existing, (m: (typeof matched)[number]) => expected(m.profile.id, m.profile.revision));
+  const plan = planPolicyWrites(matched, existing, (m: { profile: { id: string; revision: number } }) => expected(m.profile.id, m.profile.revision));
   assert.deepEqual(plan.counts, { ok: 1, missing: 1, stale: 1, malformed: 1 });
   assert.deepEqual(plan.toWrite.map((m) => m.profile.sku), ["B", "C", "D"]);
   assert.deepEqual(plan.problems.map((p) => p.status), ["stale", "missing", "malformed"]);
