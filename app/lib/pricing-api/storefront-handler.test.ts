@@ -728,14 +728,35 @@ test("5B.3A: env adjustment GID that disagrees with the shop policy → fail clo
   });
 });
 
-test("5B.3A: env adjustment GID missing / not a variant GID → fail closed", async () => {
-  for (const bad of [undefined, "424242", "gid://shopify/Product/1", "  "]) {
+test("5B.3A: env adjustment pin set to something that is not a variant GID → fail closed", async () => {
+  for (const bad of ["424242", "gid://shopify/Product/1", "  "]) {
     await withEnv({ ...V2_ENV, IMPRINTID_ADJUSTMENT_VARIANT_ID: bad }, async () => {
       const result = await v2Result({ quantity: 100 }, fixedProvider());
       assert.equal(result.body.ok, true);
       if (result.body.ok) assert.equal(result.body.data.cartPricing, null, String(bad));
     });
   }
+});
+
+test("multi-shop: with no env pin, the quote uses the shop policy's own adjustment variant", async () => {
+  const shopAdj = "gid://shopify/ProductVariant/777001";
+  await withEnv({ ...V2_ENV, IMPRINTID_ADJUSTMENT_VARIANT_ID: undefined }, async () => {
+    const result = await v2Result({ quantity: 100 }, fixedProvider({ adjustmentVariantGid: shopAdj }));
+    assert.equal(result.body.ok, true);
+    if (result.body.ok) {
+      assert.ok(result.body.data.cartPricing, "a signed quote is issued");
+      const payload = JSON.parse(result.body.data.cartPricing!.payload);
+      assert.equal(payload.adjustmentVariantGid, shopAdj);
+    }
+  });
+});
+
+test("multi-shop: with no env pin, a shop policy without a valid adjustment variant fails closed", async () => {
+  await withEnv({ ...V2_ENV, IMPRINTID_ADJUSTMENT_VARIANT_ID: undefined }, async () => {
+    const result = await v2Result({ quantity: 100 }, fixedProvider({ adjustmentVariantGid: "gid://shopify/Product/5" }));
+    assert.equal(result.body.ok, true);
+    if (result.body.ok) assert.equal(result.body.data.cartPricing, null);
+  });
 });
 
 test("5B.3A: signing secret missing / blank / whitespace-only / padded → calc still returned for display, cartPricing null", async () => {

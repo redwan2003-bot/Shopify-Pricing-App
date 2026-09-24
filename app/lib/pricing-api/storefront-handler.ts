@@ -240,8 +240,22 @@ export function canIssueSignedV2Quote(): boolean {
   return (
     selectCartEnvelope() === "v2" &&
     validateSigningSecret(process.env.IMPRINTID_CART_SIGNING_SECRET) !== null &&
-    validateAdjustmentVariantGid(process.env.IMPRINTID_ADJUSTMENT_VARIANT_ID) !== null
+    adjustmentVariantPin().ok
   );
+}
+
+/**
+ * The adjustment variant a v2 quote uses comes from each shop's own app-owned enforcement
+ * policy (written by install-time setup; merchants cannot edit it), so one deployment can
+ * serve many shops. `IMPRINTID_ADJUSTMENT_VARIANT_ID` is an OPTIONAL pin for a single-shop
+ * deployment: unset means "use the shop's policy"; set to a valid GID means the shop's policy
+ * must equal it; set to anything invalid fails closed.
+ */
+export function adjustmentVariantPin(): { ok: true; pin: string | null } | { ok: false } {
+  const raw = process.env.IMPRINTID_ADJUSTMENT_VARIANT_ID;
+  if (raw === undefined || raw === "") return { ok: true, pin: null };
+  const pin = validateAdjustmentVariantGid(raw);
+  return pin ? { ok: true, pin } : { ok: false };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -413,13 +427,18 @@ async function buildSignedV2Quote(
     console.warn("[cart-pricing:v2] IMPRINTID_CART_SIGNING_SECRET missing/invalid — no v2 quote produced.");
     return null;
   }
-  const adjustmentVariantId = validateAdjustmentVariantGid(process.env.IMPRINTID_ADJUSTMENT_VARIANT_ID);
-  if (!adjustmentVariantId) {
-    console.warn("[cart-pricing:v2] IMPRINTID_ADJUSTMENT_VARIANT_ID invalid — no v2 quote produced.");
+  const pin = adjustmentVariantPin();
+  if (!pin.ok) {
+    console.warn("[cart-pricing:v2] IMPRINTID_ADJUSTMENT_VARIANT_ID is set but invalid — no v2 quote produced.");
     return null;
   }
-  if (enforcement.adjustmentVariantGid !== adjustmentVariantId) {
-    console.warn("[cart-pricing:v2] adjustment variant GID mismatch between env and shop policy — failing closed.");
+  const adjustmentVariantId = validateAdjustmentVariantGid(enforcement.adjustmentVariantGid);
+  if (!adjustmentVariantId) {
+    console.warn("[cart-pricing:v2] shop policy has no valid adjustment variant — no v2 quote produced.");
+    return null;
+  }
+  if (pin.pin !== null && pin.pin !== adjustmentVariantId) {
+    console.warn("[cart-pricing:v2] adjustment variant GID mismatch between env pin and shop policy — failing closed.");
     return null;
   }
 

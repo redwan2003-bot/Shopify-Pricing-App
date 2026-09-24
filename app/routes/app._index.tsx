@@ -1,11 +1,20 @@
-import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
+import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { readShopPolicyContext } from "../lib/catalog/admin-client.ts";
 import { parseShopEnforcementPolicy } from "../lib/pricing-api/policy-metafields.ts";
+import { provisionShop, provisionStatusFrom, readProvisionState, type ProvisionStep } from "../lib/provisioning/provision-shop.ts";
+
+const STEP_LABEL: Record<ProvisionStep, string> = {
+  definitions: "pricing data fields",
+  adjustment_product: "hidden pricing-adjustment product",
+  shop_policy: "store pricing policy",
+  cart_transform: "cart pricing function",
+  validation: "checkout validation",
+};
 
 type EnforcementSummary =
   | { state: "unreadable" }
@@ -27,6 +36,14 @@ const MODE_EXPLANATION: Record<string, string> = {
  */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
+
+  let setup: { state: "complete" } | { state: "incomplete"; missing: string[] } | { state: "unknown" } = { state: "unknown" };
+  try {
+    const status = provisionStatusFrom(await readProvisionState(admin));
+    setup = status.complete ? { state: "complete" } : { state: "incomplete", missing: status.missing.map((m) => STEP_LABEL[m]) };
+  } catch {
+    setup = { state: "unknown" };
+  }
 
   // Read-only: show what the shop is actually set to. A failed read is reported as such,
   // never as "enforcement is off".
@@ -57,6 +74,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       configuredProductCount: 0,
       newInquiries: 0,
       enforcement,
+      setup,
     };
   }
 
@@ -80,11 +98,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     configuredProductCount,
     newInquiries,
     enforcement,
+    setup,
   };
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin } = await authenticate.admin(request);
+  const report = await provisionShop(admin);
+  return report.ok
+    ? { ok: true as const, message: report.changed.length ? "Setup finished." : "Everything was already set up." }
+    : { ok: false as const, message: `Setup stopped at the ${STEP_LABEL[report.failedStep ?? "definitions"]}: ${report.error ?? "unknown error"}` };
 };
 
 export default function Index() {
   const data = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
+  const busy = useNavigation().state !== "idle";
 
   return (
     <s-page heading="ImprintID Dynamic Pricing">
@@ -125,6 +154,24 @@ export default function Index() {
           </s-paragraph>
         </s-section>
       )}
+
+      <s-section heading="Setup">
+        {data.setup.state === "complete" ? (
+          <s-paragraph>Everything dynamic pricing needs on this store is in place.</s-paragraph>
+        ) : data.setup.state === "incomplete" ? (
+          <s-stack direction="block" gap="base">
+            <s-paragraph>Setup isn&apos;t finished. Still missing: {data.setup.missing.join(", ")}.</s-paragraph>
+            <Form method="post">
+              <button type="submit" disabled={busy}>
+                {busy ? "Finishing setup…" : "Finish setup"}
+              </button>
+            </Form>
+          </s-stack>
+        ) : (
+          <s-paragraph>{"Couldn't check setup right now. Reload the page to try again."}</s-paragraph>
+        )}
+        {actionData ? <s-paragraph>{actionData.message}</s-paragraph> : null}
+      </s-section>
 
       <s-section heading="Enforcement">
         {data.enforcement.state === "configured" ? (
