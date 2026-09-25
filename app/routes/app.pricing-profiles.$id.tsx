@@ -96,6 +96,12 @@ export default function PricingProfileEditor() {
             {result.message}
           </p>
         ) : null}
+        {!data.canEdit ? (
+          <p role="alert" style={{ color: "#8a5a00" }}>
+            Your subscription isn&apos;t active, so this profile is view-only. Your storefront keeps quoting existing prices.{" "}
+            <Link to="/app/billing">Subscribe to resume editing</Link>.
+          </p>
+        ) : null}
       </s-section>
 
       <Form method="post">
@@ -286,7 +292,7 @@ export default function PricingProfileEditor() {
         </s-section>
 
         <s-section>
-          <button type="submit" disabled={busy}>
+          <button type="submit" disabled={busy || !data.canEdit}>
             {busy ? "Saving…" : data.isNew ? "Create profile" : "Save changes"}
           </button>
         </s-section>

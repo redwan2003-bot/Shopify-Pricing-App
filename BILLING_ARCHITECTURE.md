@@ -1,82 +1,80 @@
 # Billing Architecture — ImprintID Dynamic Pricing
 
-Status: **draft — blocked on business decisions**, not yet implemented. Nothing in this file is
-built; this is the design to review before implementation starts.
+Status: **implemented** (2026-09-25). This is now a record of what was built and why, not a
+proposal — kept for anyone reviewing the launch readiness work later.
 
-## Current state
+## Decisions (made by the user, 2026-09-25)
 
-No billing code exists anywhere in `app/`. No `[app_pricing]`/pricing block exists in either
-`.toml`. This is expected at this stage — it's the next thing to build, not a bug in what's
-already shipped.
+- One flat plan: **$29.99/month, 14-day free trial**. No tiers at launch.
+- Gating scope: a lapsed/cancelled/expired subscription blocks **editing/creating pricing
+  profiles only**. Already-linked products keep quoting their last saved prices on the
+  storefront regardless of subscription status — nothing changes for shoppers when a merchant's
+  subscription lapses.
 
-## Recommended approach: Shopify App Pricing (Managed Pricing), not a custom Billing API integration
+## What was built
 
-For a new public app, Shopify's current guidance is to use Shopify App Pricing rather than
-building custom `AppSubscriptionCreate`/webhook logic by hand, unless the pricing model needs
-something Shopify App Pricing genuinely can't express. Shopify hosts the plan-selection UI,
-handles recurring charges, trials, and plan changes, and merchants can change plans without
-contacting support — which Shopify explicitly requires apps to support. This app's pricing model
-(a flat subscription gating access to the dynamic-pricing feature set) fits Shopify App Pricing
-well; there's no usage-based or per-transaction billing need identified so far.
+Uses the officially supported billing module built into
+`@shopify/shopify-app-react-router` (`authenticate.admin(request)` returns a `billing` context
+with `check`/`request`/`cancel`/`require`) rather than hand-rolling GraphQL calls — this is the
+first-party mechanism for this exact app template, not a workaround.
 
-**This audit could not verify the exact current TOML/CLI configuration surface for Shopify App
-Pricing from this environment (no network access to shopify.dev).** Configuration is primarily
-done through the Partner Dashboard's Pricing tab for the app record; confirm the current
-mechanism (dashboard-only vs. also configurable via `shopify.app.toml`) directly in the Partner
-Dashboard or with `shopify app config push --help` before implementing.
+- **`app/shopify.server.ts`**: `billing: { [MONTHLY_PLAN]: { trialDays: 14, lineItems: [{ amount:
+  29.99, currencyCode: "USD", interval: BillingInterval.Every30Days }] } }`. `MONTHLY_PLAN` itself
+  lives in `app/lib/billing/plan.ts` — a separate, side-effect-free module — so it can be imported
+  by unit tests without pulling in `shopifyApp()`, which throws at import time without
+  `SHOPIFY_APP_URL`/`SHOPIFY_API_KEY` set.
+- **`app/lib/billing/entitlement.ts`**: `readEntitlement(billing.check)` — never throws; a
+  transport failure or any exception comes back as `{ ok: false, hasActivePayment: false }`, so
+  callers fail closed exactly like `readShopPolicyContext` does for the enforcement policy.
+  `isTestBillingMode()` defaults to "not production" and can be forced either way with
+  `SHOPIFY_BILLING_TEST_MODE`.
+- **`app/lib/billing/billing-route.server.ts`** + **`app/routes/app.billing.tsx`**: the Billing
+  page. Shows current status; "Subscribe" posts `intent=subscribe`, which calls `billing.request`
+  (this throws internally — Shopify's library redirects the merchant to its own confirmation
+  page, either via a 302 or, for an embedded session-token request, a 401 carrying
+  `X-Shopify-API-Request-Failure-Reauthorize-Url` for App Bridge to follow). "Cancel subscription"
+  posts `intent=cancel`, calling `billing.cancel`.
+- **The gate**: `app/lib/pricing-editor/editor-route.server.ts`'s `editLoader` now returns
+  `canEdit` (used to show a banner and disable the Save button in
+  `app/routes/app.pricing-profiles.$id.tsx`), and `editAction` refuses to save with a friendly
+  message when `!hasActivePayment` — checked before any parsing or writes happen. Viewing/listing
+  profiles is **not** gated, matching the "block editing only" decision.
+- Nav link added ("Billing") in `app/routes/app.tsx`.
 
-## What still needs implementation regardless of dashboard vs. TOML configuration
+## Test coverage
 
-Even with Shopify hosting the plan-selection UI, the app itself must:
+- `app/lib/billing/entitlement.test.ts` (6 tests, `node --test`): `isTestBillingMode`'s
+  default/override behavior; an active subscription is reported correctly; no subscription is a
+  clean non-error result; `hasActivePayment: true` with an empty subscriptions array (a shape
+  Shopify's API could in principle return) is still treated as **not** entitled rather than
+  crashing; a thrown `Error` and a thrown non-`Error` value both fail closed with a usable
+  message.
+- `scripts/_billing-live.mjs` (12 checks against a stubbed Admin API, real signed session
+  tokens): no-subscription state; `billing.request`'s 401/reauth-header redirect carries
+  Shopify's real confirmation URL; the subscribe request uses the configured plan name, $29.99,
+  and 14-day trial; the loader reflects an approved subscription's details; cancel works and its
+  message states the storefront/existing-profile impact; cancelling with no subscription id and
+  an unrecognized action intent are both refused cleanly instead of silently ignored.
+- `scripts/_editor-live.mjs` extended with 6 billing-gate checks: `canEdit` is `false` on both
+  the new-profile and edit pages without a subscription; a save attempt is refused with nothing
+  written and the profile's revision untouched; `canEdit` returns to `true` once the subscription
+  is active again. The script's other 21 profile-CRUD checks now run against a stubbed **active**
+  subscription by default, so the billing gate doesn't change their outcome.
 
-1. **Check subscription status on every relevant request.** Add an entitlement check (likely a
-   helper alongside `authenticate.admin`) that reads the shop's active subscription and gates
-   pricing-profile creation/editing and the storefront cart-pricing signing path accordingly.
-2. **Handle every subscription state**, not just "active":
-   - No subscription (fresh install, before plan selection)
-   - Active
-   - Expired / declined
-   - Cancelled
-   - Pending approval (merchant approved on Shopify's side but the app hasn't confirmed yet —
-     a real race condition; don't assume synchronous confirmation)
-   - Reinstall (a shop that previously had a subscription installs again)
-   - Upgrade / downgrade between plans, if more than one plan is offered
-3. **Fail safe, not open.** If the app cannot determine subscription status (API error, timeout),
-   default to treating pricing as **unavailable**, not available — consistent with this app's
-   existing "fails closed" pattern for cart signing (`IMPRINTID_CART_ENVELOPE_VERSION` unset ⇒
-   `cartPricing: null`, never a silent default).
-4. **Decide what "gated" means for this app specifically.** Candidates, not yet decided:
-   - Block creating/editing pricing profiles without an active subscription (safest — keeps a
-     lapsed subscriber's storefront prices frozen rather than broken).
-   - Block the storefront cart-pricing signing path itself (harsher — an expired subscription
-     would make the merchant's live storefront stop quoting prices for enrolled products, which
-     is riskier for a merchant's business and worth the user's explicit sign-off before building).
-5. **Test every state above** — this needs its own test file alongside the eventual
-   `app/lib/billing/` module, following the same live-verification pattern used for settings and
-   the pricing editor (a stubbed Admin API for `AppSubscriptionCreate` / `currentAppInstallation`
-   responses, driven by signed session tokens).
+Full suite: 961/961 passing (was 955 before this work — 6 new entitlement unit tests). Typecheck
+and lint clean.
 
-## Open questions — need the user's decision before implementation
+## What's still manual / not covered by this pass
 
-These are business decisions, not technical ones, so nothing here is guessed:
-
-- Plan name and monthly price.
-- Whether to offer a free trial, and its length.
-- Whether to offer more than one paid tier at launch (the recommendation above is to start with
-  exactly one plan — simplicity reduces both build and review surface — and add tiers later if
-  there's a real reason to).
-- Which of the two gating options in item 4 above (block editing vs. block storefront pricing) on
-  a lapsed/cancelled subscription.
-
-## Suggested sequencing once decided
-
-1. Configure the plan(s) (Partner Dashboard and/or TOML, per the confirmed current mechanism).
-2. Build `app/lib/billing/` — a `readSubscriptionStatus` helper mirroring
-   `app/lib/catalog/admin-client.ts`'s `readShopPolicyContext` pattern (typed ok/error result,
-   never throws to the caller), plus the entitlement gate chosen above.
-3. Wire the gate into the pricing-profile editor's `editAction` and/or the storefront signing
-   path per the decision in item 4.
-4. Write the state-matrix test suite.
-5. Live-verify against a stubbed Admin API the same way `scripts/_editor-live.mjs` did for the
-   editor.
-6. Update `RELEASE_READINESS.md`'s known-issues list once this lands.
+- **The actual $29.99 monthly recurring charge has never been exercised against a real Shopify
+  store.** Everything above is verified against a stubbed Admin API. Before submission, install
+  on a real dev/Basic/Grow store with `SHOPIFY_BILLING_TEST_MODE` unset (or `true`) and walk the
+  real subscribe → approve → cancel flow once, watching Shopify's actual confirmation page.
+- `billing.check`'s pagination over `oneTimePurchases` was not exercised (this app has no
+  one-time-purchase plan, so `oneTimePurchases` is always empty in practice) — not a gap for this
+  app's model, noted for completeness.
+- No UI test coverage for the Billing page's rendering itself (banners, button states) — only its
+  server-side loader/action logic. Consistent with how the rest of this app's admin UI is tested
+  (server logic live-verified; the JSX itself is reviewed, not automated).
+- The Home page does not yet surface subscription status (only the dedicated Billing page and the
+  in-editor banner do). Not required by the decisions above; can be added later if useful.

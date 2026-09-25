@@ -8,7 +8,9 @@ const { PrismaClient } = await import("@prisma/client");
 const prisma = new PrismaClient();
 await prisma.session.create({ data: { id: `offline_${SHOP}`, shop: SHOP, state: "x", isOnline: false, accessToken: "t", scope: process.env.SCOPES } });
 
-// Simulated store: product 501 sells EDT01_*, product 502 sells OTHER_*.
+// Simulated store: product 501 sells EDT01_*, product 502 sells OTHER_*. Billing defaults to an
+// active subscription so the profile-CRUD assertions below aren't gated; the billing gate itself
+// is exercised at the end by toggling this off.
 const store = {
   products: [
     { id: "gid://shopify/Product/501", title: "Editor lanyard", skus: ["EDT01_Red", "EDT01_Blue"] },
@@ -16,6 +18,18 @@ const store = {
   ],
   metafields: new Map(),
   writes: [],
+  billingActive: true,
+};
+const ACTIVE_SUBSCRIPTION = {
+  id: "gid://shopify/AppSubscription/live1",
+  name: "ImprintID Dynamic Pricing Monthly",
+  test: true,
+  trialDays: 14,
+  createdAt: "2026-09-25T00:00:00Z",
+  currentPeriodEnd: "2026-10-25T00:00:00Z",
+  returnUrl: "https://example.com/app/billing",
+  lineItems: [],
+  status: "ACTIVE",
 };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
@@ -23,7 +37,14 @@ globalThis.fetch = async (input, init) => {
   if (!url.includes(`${SHOP}/admin/api`)) return realFetch(input, init);
   const { query, variables } = JSON.parse(init.body);
   let data;
-  if (query.includes("ImprintIdShopPolicy")) data = { shop: { currencyCode: "USD", metafield: null } };
+  if (query.includes("appSubscription("))
+    data = {
+      currentAppInstallation: {
+        activeSubscriptions: store.billingActive ? [ACTIVE_SUBSCRIPTION] : [],
+        oneTimePurchases: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } },
+      },
+    };
+  else if (query.includes("ImprintIdShopPolicy")) data = { shop: { currencyCode: "USD", metafield: null } };
   else if (query.includes("ImprintIdSkuIndex"))
     data = {
       products: {
@@ -164,6 +185,27 @@ try {
     r = await save(foreign.id, draft);
     ok("another shop's profile can't be saved", !r.ok && /no longer exists/.test(r.message), r.message);
   } else console.log("SKIP - no other shop's profile in this database");
+
+  // --- billing gate ---
+  store.billingActive = false;
+  const gatedLoaded = await editLoader({ request: req(`/app/pricing-profiles/${created.id}`), params: { id: created.id }, context: {} });
+  ok("billing: without an active subscription, the edit page reports canEdit=false", gatedLoaded.canEdit === false);
+  const gatedNewLoaded = await editLoader({ request: req("/app/pricing-profiles/new"), params: { id: "new" }, context: {} });
+  ok("billing: a new-profile page also reports canEdit=false without a subscription", gatedNewLoaded.canEdit === false);
+  const writesBeforeGate = store.writes.length;
+  const gatedDraft = structuredClone(loaded.draft);
+  gatedDraft.tiers[0].net = "1.10";
+  r = await save(created.id, gatedDraft);
+  ok(
+    "billing: saving is refused without an active subscription, nothing written",
+    !r.ok && /subscription isn't active/.test(r.message) && store.writes.length === writesBeforeGate,
+    r.message,
+  );
+  const notBumped = await prisma.pricingProfile.findUnique({ where: { id: created.id } });
+  ok("billing: the profile's revision is untouched by the refused save", notBumped.revision === bumped.revision);
+  store.billingActive = true;
+  const ungatedLoaded = await editLoader({ request: req(`/app/pricing-profiles/${created.id}`), params: { id: created.id }, context: {} });
+  ok("billing: canEdit returns to true once the subscription is active again", ungatedLoaded.canEdit === true);
 } finally {
   await prisma.store.deleteMany({ where: { shopDomain: SHOP } });
   await prisma.session.deleteMany({ where: { shop: SHOP } });

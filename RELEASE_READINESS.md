@@ -59,3 +59,16 @@ touching the pricing-profile CRUD path unless a release blocker is found there.
 Per the user's original editor scope: bulk editing and new decoration methods. Per this launch
 plan: no feature development on the pricing-profile editor itself unless a release blocker
 surfaces there — it is frozen at `aedc17e`.
+
+## Progress log (updates the "Known issues" list above without rewriting the baseline snapshot)
+
+- **2026-09-25, commit `7d83016`**: issue 3 (leaked secret) fixed in the file; rotation itself
+  is still a manual action for the user (Render env var + `npm run fn:config` + Function
+  redeploy).
+- **2026-09-25**: issue 5 (billing) **implemented** — see `BILLING_ARCHITECTURE.md` for the full
+  record. One flat plan, $29.99/month, 14-day trial; gates pricing-profile editing only, never
+  storefront pricing. 961/961 tests passing (was 955), typecheck/lint clean, 39 live checks
+  across `scripts/_billing-live.mjs` (12) and the extended `scripts/_editor-live.mjs` (27, up
+  from 21). Not yet exercised against a real Shopify store's real billing flow — see
+  `BILLING_ARCHITECTURE.md`'s "still manual" section.
+- Issues 1, 2, 4, 6, 7 remain open as described above.
