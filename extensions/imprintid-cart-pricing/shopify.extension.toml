@@ -24,6 +24,16 @@ description = "t:description"
   # pipeline (verified 2026-09-25: that's exactly why this never produced a wasm).
   command = ""
   path = "dist/function.wasm"
+  # Shopify CLI's default typegen invocation (`pnpm exec graphql-code-generator`) hits a
+  # dual-module-instance bug in the pnpm-generated CLI binary -- "Cannot use GraphQLNonNull
+  # ... from another module or realm" -- reproduced 2026-09-25 with zero Shopify CLI
+  # involvement, using the exact same dependency tree and the exact codegen.json Shopify CLI
+  # itself generates. Calling @graphql-codegen/cli's own generate() API directly, same
+  # environment, succeeds. typegen_command is spawned directly (no shell, no package-manager
+  # wrapper, no config path passed) with cwd = this directory -- scripts/typegen.mjs
+  # reconstructs the same effective config and calls generate() directly, bypassing only the
+  # broken bin-shim path. The rest of the pipeline (JS bundling, javy) is untouched.
+  typegen_command = "node scripts/typegen.mjs"
 
   [extensions.ui.paths]
   create = "/"
