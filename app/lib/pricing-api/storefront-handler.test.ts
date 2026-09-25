@@ -58,6 +58,7 @@ async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Pr
  */
 const SHOP_DOMAIN = "imprintid-pricing-development.myshopify.com";
 const SKU = "LNY01";
+const LNY01_PRODUCT_ID = "9442404663548"; // the codebase-wide convention for "the LNY01 product" (see product-resolver.test.ts)
 
 const prisma = new PrismaClient();
 
@@ -96,6 +97,21 @@ before(async () => {
       quantityTiers: [{ minQuantity: 10, listPriceCents: 2000, netPriceCents: 1900 }],
     }),
   );
+
+  // The product-override tests below (Task 4A, "product_override" resolutionSource) need an
+  // active ProductPricingOverride linking LNY01_PRODUCT_ID to the real seeded LNY01 profile
+  // (prisma/seed.ts) — deliberately NOT part of that seed itself, since the product<->profile
+  // link is store-specific runtime state, not portable pricing data. Mirrors the same
+  // self-contained fixture pattern product-resolver.test.ts already uses for this exact id.
+  const lny01Store = await prisma.store.findUnique({ where: { shopDomain: SHOP_DOMAIN } });
+  const lny01Profile = lny01Store ? await prisma.pricingProfile.findFirst({ where: { storeId: lny01Store.id, sku: SKU } }) : null;
+  if (lny01Store && lny01Profile) {
+    await prisma.productPricingOverride.upsert({
+      where: { storeId_shopifyProductId: { storeId: lny01Store.id, shopifyProductId: LNY01_PRODUCT_ID } },
+      update: { pricingProfileId: lny01Profile.id, isActive: true },
+      create: { storeId: lny01Store.id, shopifyProductId: LNY01_PRODUCT_ID, pricingProfileId: lny01Profile.id, isActive: true },
+    });
+  }
 });
 
 after(async () => {
@@ -534,8 +550,6 @@ test("5B.1.1: envelope '2' attempts v2 but fails closed (null policy provider) -
 });
 
 // --- Task 4A: identity echo + blank-SKU-via-product-override --------------------------
-
-const LNY01_PRODUCT_ID = "9442404663548"; // the real LNY01 Shopify product id (has an active ProductPricingOverride)
 
 test("4A. a request identity is echoed back with the resolution source", async () => {
   const result = await handleStorefrontPricingRequest(
