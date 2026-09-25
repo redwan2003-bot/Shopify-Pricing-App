@@ -50,6 +50,22 @@ jobs:
       - name: Regenerate SQLite Prisma Client for tests
         run: npx prisma generate --schema=prisma/schema.prisma
 
+      # A fresh CI checkout has no prisma/dev.sqlite and nothing has ever applied the SQLite
+      # migration history to it, so every Prisma call fails with "table does not exist".
+      - name: Apply SQLite migrations for tests
+        run: npx prisma migrate deploy --schema=prisma/schema.prisma
+
+      # A subset of tests (app/lib/pricing/lny01.test.ts and everything downstream of it) are
+      # explicitly documented as calculating against the real seeded LNY01 profile, not a
+      # fixture -- an empty-but-migrated database isn't enough for them.
+      # The test suite's own SHOP_DOMAIN constants (app/lib/pricing/lny01.test.ts and its
+      # downstream pricing-api tests) expect "imprintid-pricing-development.myshopify.com",
+      # not prisma/seed.ts's own default -- point the seed at the domain the tests already use.
+      - name: Seed the SQLite database for tests
+        run: npm run db:seed
+        env:
+          SEED_SHOP_DOMAIN: imprintid-pricing-development.myshopify.com
+
       - name: Run Full Test Suite
         run: npm test
 
