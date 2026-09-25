@@ -17,8 +17,12 @@ description = "t:description"
   # src/config.generated.ts) MUST exist before this Function is bundled. It is written
   # by `node scripts/generate-config.mjs`, run automatically by the repo-root npm hooks
   # `pretest` / `pretypecheck` / `predev` / `predeploy` (see package.json `fn:config`).
-  # A custom `command` here would REPLACE the CLI's javy build, so it stays empty.
-  command = "node -e \"\""
+  # A custom `command` here would REPLACE the CLI's own build pipeline, so this must be a
+  # truly empty string (Shopify's documented JS-Function pattern) -- a no-op shell command
+  # like `node -e ""` is NOT the same thing: the CLI treats any non-empty command as a
+  # literal user-supplied build, running it verbatim instead of its real codegen+javy
+  # pipeline (verified 2026-09-25: that's exactly why this never produced a wasm).
+  command = ""
   path = "dist/function.wasm"
 
   [extensions.ui.paths]

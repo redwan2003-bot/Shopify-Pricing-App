@@ -95,6 +95,15 @@ jobs:
         env:
           IMPRINTID_CART_SIGNING_SECRET: ${{ secrets.IMPRINTID_CART_SIGNING_SECRET }}
 
+      # The Shopify CLI's JavaScript-Function build pipeline (GraphQL codegen, then javy)
+      # unconditionally shells out to `pnpm exec`, regardless of the project's own package
+      # manager -- confirmed by reproducing `spawn pnpm ENOENT` in a clean container with no
+      # pnpm installed. Node 22 ships Corepack, so this needs no extra dependency.
+      - name: Enable pnpm (required by the Shopify CLI's Function build pipeline)
+        run: |
+          corepack enable
+          pnpm --version
+
       - name: Install Shopify CLI
         run: npm install -g @shopify/cli
 
