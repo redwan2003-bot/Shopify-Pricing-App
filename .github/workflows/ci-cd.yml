@@ -43,6 +43,13 @@ jobs:
             || { echo "::error::prisma/schema.prisma and schema.postgresql.prisma differ beyond the datasource block"; exit 1; }
         shell: bash
 
+      # The PostgreSQL generate step above overwrites the SQLite client at the same default
+      # output path (neither schema declares a custom `output`), so the test suite would
+      # otherwise run against a Postgres-typed client with no postgresql:// DATABASE_URL.
+      # Regenerate the SQLite client right before tests run so it's the one in effect.
+      - name: Regenerate SQLite Prisma Client for tests
+        run: npx prisma generate --schema=prisma/schema.prisma
+
       - name: Run Full Test Suite
         run: npm test
 
