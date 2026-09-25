@@ -101,7 +101,7 @@ jobs:
       - name: Deploy Extensions & Configuration
         run: shopify app deploy --config shopify.app.production.toml --allow-updates --message "CI/CD automated deployment [${{ github.sha }}]"
         env:
-          SHOPIFY_CLI_PARTNERS_TOKEN: ${{ secrets.SHOPIFY_CLI_PARTNERS_TOKEN }}
+          SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
           SHOPIFY_FLAG_STORE: imprintid-pricing-dev.myshopify.com
 
   build-docker-image:
