@@ -381,9 +381,14 @@
     "dynamic_pricing.request_quote": {{ 'dynamic_pricing.request_quote' | t | default: 'Request Quote' | json }}
   };
 </script>
-{%- comment -%} Module scripts are deferred by default; dynamic-pricing.js imports
-   dynamic-pricing-utils.js directly (see that file), so only one tag is needed here. {%- endcomment -%}
-<script type="module" src="{{ 'dynamic-pricing.js' | asset_url }}"></script>
+{%- comment -%} Module scripts are deferred by default; imprintid-dynamic-pricing.js imports
+   imprintid-dynamic-pricing-utils.js directly (see that file), so only one tag is needed here. {%- endcomment -%}
+{%- comment -%}
+  Keep this asset name app-specific. The installed theme already has a legacy
+  `dynamic-pricing.js`; using that generic name causes Shopify to serve the theme's
+  stale script instead of this extension's catalog-driven storefront client.
+{%- endcomment -%}
+<script type="module" src="{{ 'imprintid-dynamic-pricing.js' | asset_url }}"></script>
 
 {% schema %}
 {
