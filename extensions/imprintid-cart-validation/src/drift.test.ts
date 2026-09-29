@@ -81,7 +81,7 @@ test("drift: verifyCartPricingAttributesV2 in the Validation extension matches e
 });
 
 // ---------------------------------------------------------------------------
-// 3. expectedExpandedComponents ↔ the Transform's real lineExpand output
+// 3. The Transform's direct price override ↔ the signed total
 // ---------------------------------------------------------------------------
 
 function txInputForValidVector(v: (typeof VECTORS.vectors)[number]): NormalizedTransformInput {
@@ -103,28 +103,19 @@ function txInputForValidVector(v: (typeof VECTORS.vectors)[number]): NormalizedT
   };
 }
 
-test("drift: expectedExpandedComponents equals the Transform's actual expanded items for every valid vector", () => {
+test("drift: the Transform's direct line price equals the signed total for every valid vector", () => {
   for (const v of VECTORS.vectors) {
     if (v.expect !== "valid") continue;
     const p = JSON.parse(v.payloadJson) as CartPricingPayloadV2;
     const result = runCartTransform(txInputForValidVector(v), VECTORS.secret);
-    assert.equal(result.operations.length, 1, `${v.name}: transform should expand`);
+    assert.equal(result.operations.length, 1, `${v.name}: transform should price the line`);
     const op = result.operations[0]!;
-    assert.ok("lineExpand" in op && op.lineExpand, v.name);
-    if (!("lineExpand" in op) || !op.lineExpand) continue;
-
-    const actual = op.lineExpand.expandedCartItems.map((i) => ({
-      merchandiseGid: i.merchandiseId,
-      quantity: i.quantity,
-      amount: i.price!.adjustment.fixedPricePerUnit.amount,
-    }));
-    const expected = expectedExpandedComponents(p).map((c) => ({
-      merchandiseGid: c.merchandiseGid,
-      quantity: c.quantity,
-      amount: c.kind === "base"
-        ? `${Math.floor(c.perUnitCents / 100)}.${String(c.perUnitCents % 100).padStart(2, "0")}`
-        : (c.perUnitCents / 100).toFixed(8),
-    }));
-    assert.deepEqual(actual, expected, `${v.name}: component multiset`);
+    assert.ok("lineUpdate" in op && op.lineUpdate, v.name);
+    if (!("lineUpdate" in op) || !op.lineUpdate) continue;
+    assert.equal(
+      op.lineUpdate.price?.adjustment.fixedPricePerUnit.amount,
+      (p.lineTotalCents / p.quantity / 100).toFixed(2),
+      `${v.name}: direct unit price`,
+    );
   }
 });
