@@ -196,8 +196,8 @@ function componentSetup(payloadOver: Record<string, unknown> = {}) {
     money: MONEY(137, q.payload.lineTotalCents),
     parentLineId: null,
   });
-  const baseChild = line({ id: "c-base", parentLineId: "parent-1", variantGid: VARIANT, productGid: PRODUCT, productPolicyJson: null, quantity: 100, money: MONEY(137, 13700) });
-  const flatChild = line({ id: "c-flat", parentLineId: "parent-1", variantGid: ADJ, productGid: "gid://shopify/Product/adj", productPolicyJson: null, quantity: 1, money: MONEY(4500, 4500) });
+  const baseChild = line({ id: "c-base", parentLineId: "parent-1", variantGid: VARIANT, productGid: PRODUCT, productPolicyJson: null, quantity: 1, money: MONEY(137, 137) });
+  const flatChild = line({ id: "c-flat", parentLineId: "parent-1", variantGid: ADJ, productGid: "gid://shopify/Product/adj", productPolicyJson: null, quantity: 1, money: MONEY(45, 45) });
   return { parent, baseChild, flatChild, payload: q.payload };
 }
 
