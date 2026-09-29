@@ -280,9 +280,12 @@ export function verifyCartPricingAttributesV2(
   const payload = parseV2Payload(attrs.payload);
   if (!payload) return { ok: false, reason: "malformed" };
 
-  const expectedSig = signHex(secret, canonicalizeCartPricingPayloadV2(payload));
-  if (!timingSafeEqualHex(attrs.signature, expectedSig)) return { ok: false, reason: "bad_signature" };
-
+  // --- Cheap rejection checks before HMAC ---
+  //
+  // These values are all subsequently covered by the HMAC. Checking them first cannot
+  // authorize a line; it only rejects a line that is already impossible to accept.
+  // This keeps a stale quote from consuming the Function's instruction budget before a
+  // current quote in the same cart can be evaluated.
   // --- Shopify-owned identity / revision binding (never from line properties) ---
   if (payload.installBinding !== shopPolicy.installBinding) return { ok: false, reason: "install_mismatch" };
   if (payload.adjustmentVariantGid !== shopPolicy.adjustmentVariantGid) return { ok: false, reason: "adjustment_mismatch" };
@@ -325,6 +328,11 @@ export function verifyCartPricingAttributesV2(
     payload.lineTotalCents,
   );
   if (invariant !== null) return { ok: false, reason: invariant };
+
+  // Authenticate only after every inexpensive structural and policy check passes.
+  // The HMAC is deliberately last: it is the expensive trust-boundary operation.
+  const expectedSig = signHex(secret, canonicalizeCartPricingPayloadV2(payload));
+  if (!timingSafeEqualHex(attrs.signature, expectedSig)) return { ok: false, reason: "bad_signature" };
 
   return { ok: true, payload };
 }

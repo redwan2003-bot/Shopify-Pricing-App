@@ -10,30 +10,16 @@ description = "t:description"
   [[extensions.targeting]]
   target = "cart.transform.run"
   input_query = "src/cart_transform_run.graphql"
-  export = "cart-transform-run"
+  export = "cart_transform_run"
 
   [extensions.build]
-  # Task 5B.3B §Phase-2 — the gitignored src/config.secret.generated.ts (imported by
-  # src/config.generated.ts) MUST exist before this Function is bundled. It is written
+  # Task 5B.3B §Phase-2 — the gitignored src/config.secret.generated.rs (imported by
+  # src/config.rs) MUST exist before this Function is bundled. It is written
   # by `node scripts/generate-config.mjs`, run automatically by the repo-root npm hooks
   # `pretest` / `pretypecheck` / `predev` / `predeploy` (see package.json `fn:config`).
-  # A custom `command` here would REPLACE the CLI's own build pipeline, so this must be a
-  # truly empty string (Shopify's documented JS-Function pattern) -- a no-op shell command
-  # like `node -e ""` is NOT the same thing: the CLI treats any non-empty command as a
-  # literal user-supplied build, running it verbatim instead of its real codegen+javy
-  # pipeline (verified 2026-09-25: that's exactly why this never produced a wasm).
-  command = ""
-  path = "dist/function.wasm"
-  # Shopify CLI's default typegen invocation (`pnpm exec graphql-code-generator`) hits a
-  # dual-module-instance bug in the pnpm-generated CLI binary -- "Cannot use GraphQLNonNull
-  # ... from another module or realm" -- reproduced 2026-09-25 with zero Shopify CLI
-  # involvement, using the exact same dependency tree and the exact codegen.json Shopify CLI
-  # itself generates. Calling @graphql-codegen/cli's own generate() API directly, same
-  # environment, succeeds. typegen_command is spawned directly (no shell, no package-manager
-  # wrapper, no config path passed) with cwd = this directory -- scripts/typegen.mjs
-  # reconstructs the same effective config and calls generate() directly, bypassing only the
-  # broken bin-shim path. The rest of the pipeline (JS bundling, javy) is untouched.
-  typegen_command = "node scripts/typegen.mjs"
+  command = "cargo build --target=wasm32-unknown-unknown --release"
+  path = "target/wasm32-unknown-unknown/release/imprintid_cart_pricing.wasm"
+  watch = [ "src/**/*.rs" ]
 
   [extensions.ui.paths]
   create = "/"

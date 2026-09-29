@@ -25,6 +25,7 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import process from "node:process";
 
 function fromDotEnv() {
   const envPath = fileURLToPath(new URL("../../../.env", import.meta.url));
@@ -65,6 +66,17 @@ writeFileSync(
  */
 export const CART_SIGNING_SECRET = ${JSON.stringify(secret)};
 `,
+  "utf8",
+);
+
+// The deployed Cart Transform is Rust so cryptographic verification stays well below
+// Shopify's Function instruction limit. Keep the generated value local/ignored exactly
+// as the TypeScript artifact above; neither file is committed.
+const rustOutPath = fileURLToPath(new URL("../src/config.secret.generated.rs", import.meta.url));
+writeFileSync(
+  rustOutPath,
+  `// GENERATED + GITIGNORED — see scripts/generate-config.mjs. Do not edit or commit.\n` +
+    `pub const CART_SIGNING_SECRET: &str = ${JSON.stringify(secret)};\n`,
   "utf8",
 );
 

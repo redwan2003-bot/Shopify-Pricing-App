@@ -27,6 +27,8 @@ database.sqlite
 
 
 /extensions/*/dist
+/extensions/*/target
+/extensions/*/src/config.secret.generated.rs
 
 # Ignore shopify files created during app dev
 .shopify/*

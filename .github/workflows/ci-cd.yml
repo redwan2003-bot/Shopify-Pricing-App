@@ -23,6 +23,11 @@ jobs:
           node-version: 22
           cache: 'npm'
 
+      - name: Setup Rust for Shopify Functions
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
       - name: Install Dependencies
         run: npm ci
 
@@ -30,6 +35,9 @@ jobs:
         run: npm run fn:config
         env:
           IMPRINTID_CART_SIGNING_SECRET: ${{ secrets.IMPRINTID_CART_SIGNING_SECRET || 'dev_signing_secret_for_ci_test_run' }}
+
+      - name: Build native Cart Transform
+        run: cargo build --manifest-path extensions/imprintid-cart-pricing/Cargo.toml --target wasm32-unknown-unknown --release
 
       - name: Generate Prisma Client (SQLite & PostgreSQL)
         run: |
@@ -86,6 +94,11 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
+
+      - name: Setup Rust for Shopify Functions
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Install Dependencies
         run: npm ci
