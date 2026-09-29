@@ -266,8 +266,18 @@ export async function provisionShop(admin: AdminGraphqlClientLike): Promise<Prov
         installBinding: `inst_${randomUUID()}`,
         policyRevision: 1,
       };
-    } else if (existing.adjustmentVariantGid !== adjustment.variantId) {
-      nextPolicy = { ...existing, adjustmentVariantGid: adjustment.variantId, policyRevision: existing.policyRevision + 1 };
+    } else if (existing.adjustmentVariantGid !== adjustment.variantId || existing.allowLegacyV1) {
+      // Legacy v1 authorization is a one-way migration flag. It must not survive
+      // completion of v2 setup: the Cart Transform intentionally performs no
+      // operation while allowLegacyV1 is true, while the storefront already
+      // issues v2 quotes. Clear it during provisioning and invalidate any older
+      // quotes with one policy-revision bump.
+      nextPolicy = {
+        ...existing,
+        adjustmentVariantGid: adjustment.variantId,
+        ...(existing.allowLegacyV1 ? { allowLegacyV1: false } : {}),
+        policyRevision: existing.policyRevision + 1,
+      };
     }
     if (nextPolicy) {
       if (!state.shopId) throw new ProvisionError(step, "could not read the shop id");

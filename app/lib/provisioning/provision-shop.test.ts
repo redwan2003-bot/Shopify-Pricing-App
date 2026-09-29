@@ -137,6 +137,30 @@ test("a policy pointing at a deleted adjustment product is repointed and its rev
   assert.equal(p.installBinding, "dev-1");
 });
 
+test("provisioning clears legacy v1 authorization before v2 enforcement", async () => {
+  const existing = {
+    schema: 1,
+    mode: "pilot",
+    enabled: true,
+    allowLegacyV1: true,
+    adjustmentVariantGid: "gid://shopify/ProductVariant/90",
+    installBinding: "dev-1",
+    policyRevision: 3,
+  };
+  const { admin, state, calls } = fakeShop({
+    policy: existing,
+    shopDef: true,
+    productDef: true,
+    transform: true,
+    validation: { enabled: true },
+    adjustments: 1,
+  });
+  const report = await provisionShop(admin);
+  assert.equal(report.ok, true);
+  assert.deepEqual(calls, ["ImprintIdPolicySet"]);
+  assert.deepEqual(state.policy, { ...existing, allowLegacyV1: false, policyRevision: 4 });
+});
+
 test("a malformed policy is replaced with a safe, disabled one", async () => {
   const { admin, state } = fakeShop({ policy: { nonsense: true } });
   const report = await provisionShop(admin);
