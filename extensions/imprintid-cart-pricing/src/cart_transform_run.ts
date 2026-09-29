@@ -79,6 +79,19 @@ export function centsToDecimalString(cents: number, presentmentRate: string = "1
   return ((cents / 100) * rate).toFixed(2);
 }
 
+/** Expanded quantities are per parent bundle unit. Spread the signed line
+ * surcharge over that unit so Shopify's multiplication preserves the total. */
+export function centsPerBundleToDecimalString(
+  totalCents: number,
+  bundleQuantity: number,
+  presentmentRate: string = "1",
+): string {
+  if (!Number.isFinite(totalCents) || !Number.isFinite(bundleQuantity) || bundleQuantity <= 0) return "0.00";
+  const rate = Number(presentmentRate);
+  const appliedRate = Number.isFinite(rate) && rate > 0 ? rate : 1;
+  return ((totalCents / bundleQuantity / 100) * appliedRate).toFixed(8);
+}
+
 // ---------------------------------------------------------------------------
 // Validated normalization of the generated Function input
 // ---------------------------------------------------------------------------
@@ -186,7 +199,7 @@ function buildExpandedItems(
   const items: ExpandedCartItem[] = [
     {
       merchandiseId: payload.baseVariantId,
-      quantity: payload.quantity,
+      quantity: 1,
       price: priceAdjustment(centsToDecimalString(payload.baseUnitPriceCents, presentmentRate)),
     },
   ];
@@ -195,7 +208,7 @@ function buildExpandedItems(
     items.push({
       merchandiseId: payload.adjustmentVariantId,
       quantity: 1,
-      price: priceAdjustment(centsToDecimalString(surchargeTotal, presentmentRate)),
+      price: priceAdjustment(centsPerBundleToDecimalString(surchargeTotal, payload.quantity, presentmentRate)),
     });
   }
   return items;

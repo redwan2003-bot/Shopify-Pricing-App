@@ -4,9 +4,9 @@ import type { CartPricingPayloadV2 } from "./cart-pricing-contract.ts";
  * The expanded-component multiset a validated v2 quote implies, derived EXACTLY from
  * `extensions/imprintid-cart-pricing/src/cart_transform_run.ts#buildExpandedItems`:
  *
- *   base component      : merchandise = base variant,       quantity = payload.quantity, per-unit = baseUnitPriceCents
+ *   base component      : merchandise = base variant,       quantity = 1, per-unit = baseUnitPriceCents
  *   surcharge component  : merchandise = adjustment variant, quantity = 1, per-unit =
- *                          perUnitSurchargeCents * payload.quantity + flatSurchargeCents (only if > 0)
+ *                          (perUnitSurchargeCents * payload.quantity + flatSurchargeCents) / payload.quantity
  *
  * `drift.test.ts` cross-checks `expectedExpandedComponents` against the Cart Transform's
  * real `runCartTransform` output for every golden vector, so the two cannot drift.
@@ -17,18 +17,18 @@ export type ExpectedComponentKind = "base" | "surcharge";
 export interface ExpectedComponent {
   merchandiseGid: string;
   quantity: number;
-  /** the `fixedPricePerUnit` amount, in integer cents */
+  /** the `fixedPricePerUnit` amount, in cents per bundle unit */
   perUnitCents: number;
   kind: ExpectedComponentKind;
 }
 
 export function expectedExpandedComponents(p: CartPricingPayloadV2): ExpectedComponent[] {
   const out: ExpectedComponent[] = [
-    { merchandiseGid: p.variantGid, quantity: p.quantity, perUnitCents: p.baseUnitPriceCents, kind: "base" },
+    { merchandiseGid: p.variantGid, quantity: 1, perUnitCents: p.baseUnitPriceCents, kind: "base" },
   ];
   const surchargeTotal = p.perUnitSurchargeCents * p.quantity + p.flatSurchargeCents;
   if (surchargeTotal > 0) {
-    out.push({ merchandiseGid: p.adjustmentVariantGid, quantity: 1, perUnitCents: surchargeTotal, kind: "surcharge" });
+    out.push({ merchandiseGid: p.adjustmentVariantGid, quantity: 1, perUnitCents: surchargeTotal / p.quantity, kind: "surcharge" });
   }
   return out;
 }

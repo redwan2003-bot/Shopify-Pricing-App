@@ -94,7 +94,7 @@ test("NULL per-unit amount anywhere → true", () => {
 
 test("expectedExpandedComponents: base-only when both surcharges are zero", () => {
   const comps = expectedExpandedComponents(payload({ perUnitSurchargeCents: 0, flatSurchargeCents: 0 }));
-  assert.deepEqual(comps, [{ merchandiseGid: VAR, quantity: 100, perUnitCents: 137, kind: "base" }]);
+  assert.deepEqual(comps, [{ merchandiseGid: VAR, quantity: 1, perUnitCents: 137, kind: "base" }]);
 });
 
 test("expectedExpandedComponents: base + surcharge when the total surcharge is non-zero", () => {

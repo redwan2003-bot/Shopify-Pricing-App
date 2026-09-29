@@ -98,6 +98,10 @@ fn valid_signature(quote: &Quote, provided: &str) -> bool {
 
 fn cents(amount: u64) -> Decimal { Decimal((amount / 100) as f64 + (amount % 100) as f64 / 100.0) }
 
+fn cents_per_bundle(total_cents: u64, bundle_quantity: u64) -> Decimal {
+    Decimal(total_cents as f64 / bundle_quantity as f64 / 100.0)
+}
+
 #[shopify_function]
 fn cart_transform_run(input: schema::cart_transform_run::CartTransformRunInput) -> Result<schema::CartTransformRunResult> {
     let Some(policy_field) = input.shop().enforcement_policy() else { return Ok(schema::CartTransformRunResult { operations: vec![] }); };
@@ -130,9 +134,11 @@ fn cart_transform_run(input: schema::cart_transform_run::CartTransformRunInput) 
         if expected_total != quote.line_total_cents || !valid_signature(&quote, signature) { continue; }
 
         let price = |amount| schema::ExpandedItemPriceAdjustment { adjustment: schema::ExpandedItemPriceAdjustmentValue::FixedPricePerUnit(schema::ExpandedItemFixedPricePerUnitAdjustment { amount: cents(amount) }) };
-        let mut expanded = vec![schema::ExpandedItem { merchandise_id: quote.variant_gid, quantity: *line.quantity(), price: Some(price(quote.base_unit_price_cents)), attributes: None }];
+        // Expanded quantities are per parent bundle unit; Shopify multiplies
+        // each component quantity by the parent cart-line quantity.
+        let mut expanded = vec![schema::ExpandedItem { merchandise_id: quote.variant_gid, quantity: 1, price: Some(price(quote.base_unit_price_cents)), attributes: None }];
         let surcharge_total = quote.per_unit_surcharge_cents.saturating_mul(quantity).saturating_add(quote.flat_surcharge_cents);
-        if surcharge_total > 0 { expanded.push(schema::ExpandedItem { merchandise_id: quote.adjustment_variant_gid, quantity: 1, price: Some(price(surcharge_total)), attributes: None }); }
+        if surcharge_total > 0 { expanded.push(schema::ExpandedItem { merchandise_id: quote.adjustment_variant_gid, quantity: 1, price: Some(schema::ExpandedItemPriceAdjustment { adjustment: schema::ExpandedItemPriceAdjustmentValue::FixedPricePerUnit(schema::ExpandedItemFixedPricePerUnitAdjustment { amount: cents_per_bundle(surcharge_total, quantity) }) }), attributes: None }); }
         operations.push(schema::Operation::LineExpand(schema::LineExpandOperation { cart_line_id: line.id().to_string(), expanded_cart_items: expanded, price: None, title: None, image: None }));
     }
     Ok(schema::CartTransformRunResult { operations })

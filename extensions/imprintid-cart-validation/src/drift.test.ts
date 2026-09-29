@@ -121,7 +121,9 @@ test("drift: expectedExpandedComponents equals the Transform's actual expanded i
     const expected = expectedExpandedComponents(p).map((c) => ({
       merchandiseGid: c.merchandiseGid,
       quantity: c.quantity,
-      amount: `${Math.floor(c.perUnitCents / 100)}.${String(c.perUnitCents % 100).padStart(2, "0")}`,
+      amount: c.kind === "base"
+        ? `${Math.floor(c.perUnitCents / 100)}.${String(c.perUnitCents % 100).padStart(2, "0")}`
+        : (c.perUnitCents / 100).toFixed(8),
     }));
     assert.deepEqual(actual, expected, `${v.name}: component multiset`);
   }
