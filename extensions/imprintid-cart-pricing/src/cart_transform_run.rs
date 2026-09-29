@@ -10,7 +10,7 @@ use shopify_function::Result;
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ShopPolicy {
     schema: u8,
     mode: String,
@@ -23,7 +23,7 @@ pub struct ShopPolicy {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct Quote {
     v: u8,
     install_binding: String,
@@ -144,7 +144,7 @@ fn cart_transform_run(input: schema::cart_transform_run::CartTransformRunInput) 
         if version != "2" { continue; }
         let Ok(quote) = serde_json::from_str::<Quote>(raw_payload) else { continue; };
         let quantity = *line.quantity() as u64;
-        if quote.v != 2 || quote.install_binding != policy.install_binding || quote.adjustment_variant_gid != policy.adjustment_variant_gid || quote.policy_revision != policy.policy_revision || quote.product_gid != *product.id() || quote.variant_gid != *variant.id() || quote.quantity != quantity || normalized_config_digest(config).as_deref() != Some(quote.config_digest.as_str()) || quote.currency != line.cost().amount_per_quantity().currency_code().to_string() { continue; }
+        if quote.v != 2 || quote.install_binding != policy.install_binding || quote.adjustment_variant_gid != policy.adjustment_variant_gid || quote.policy_revision != policy.policy_revision || quote.product_gid != *product.id() || quote.variant_gid != *variant.id() || quote.quantity != quantity || normalized_config_digest(config).as_deref() != Some(quote.config_digest.as_str()) { continue; }
         let expected_total = quote.base_unit_price_cents.saturating_mul(quantity).saturating_add(quote.per_unit_surcharge_cents.saturating_mul(quantity)).saturating_add(quote.flat_surcharge_cents);
         if expected_total != quote.line_total_cents || !valid_signature(&quote, signature) { continue; }
 
