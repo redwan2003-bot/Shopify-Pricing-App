@@ -54,7 +54,7 @@ api_version = "2026-07"
 # (App-reserved shop metafields — `$app:imprintid/enforcement_policy` — are writable by the
 #  owning app without a dedicated scope. `write_metaobjects` / `write_metaobject_definitions`
 #  from the Shopify app template were dropped — this app models custom data as METAFIELDS.)
-scopes = "write_products,write_cart_transforms,write_validations"
+scopes = "write_products,write_cart_transforms,write_validations,read_publications"
 
 [auth]
 redirect_urls = [

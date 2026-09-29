@@ -38,7 +38,7 @@ api_version = "2026-07"
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
 
 [access_scopes]
-scopes = "write_products,write_cart_transforms,write_validations"
+scopes = "write_products,write_cart_transforms,write_validations,read_publications"
 
 [auth]
 redirect_urls = [

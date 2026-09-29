@@ -109,4 +109,4 @@ export const RECEIPT_RELPATH = ".shopify/provision-receipt.json";
 /** Scopes the provisioning mutations require (each `write_*` also grants the matching
  * read). Shopify does NOT list the implicit `read_*` in a token's scope string, so this
  * checks ONLY the writes. */
-export const REQUIRED_SCOPES = ["write_products", "write_cart_transforms", "write_validations"];
+export const REQUIRED_SCOPES = ["write_products", "write_cart_transforms", "write_validations", "read_publications"];
