@@ -1,7 +1,7 @@
 use crate::{config::CART_SIGNING_SECRET, schema};
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use shopify_function::prelude::*;
 use shopify_function::scalars::{Decimal, JsonValue};
@@ -46,24 +46,6 @@ struct Quote {
 
 fn sha256_hex(value: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(value.as_bytes()))
-}
-
-fn canonicalize_json(value: &Value) -> Value {
-    match value {
-        Value::Object(object) => {
-            let mut ordered = std::collections::BTreeMap::new();
-            for (key, value) in object { ordered.insert(key.clone(), canonicalize_json(value)); }
-            Value::Object(ordered.into_iter().collect::<Map<String, Value>>())
-        }
-        Value::Array(values) => Value::Array(values.iter().map(canonicalize_json).collect()),
-        _ => value.clone(),
-    }
-}
-
-fn normalized_config_digest(raw: &str) -> Option<String> {
-    let value: Value = serde_json::from_str(raw).ok()?;
-    let canonical = serde_json::to_string(&canonicalize_json(&value)).ok()?;
-    Some(sha256_hex(&canonical))
 }
 
 fn json_value_to_serde(value: &JsonValue) -> Value {
@@ -140,11 +122,10 @@ fn cart_transform_run(input: schema::cart_transform_run::CartTransformRunInput) 
         let Some(version) = line.version().and_then(|a| a.value()) else { continue; };
         let Some(raw_payload) = line.payload().and_then(|a| a.value()) else { continue; };
         let Some(signature) = line.signature().and_then(|a| a.value()) else { continue; };
-        let Some(config) = line.config().and_then(|a| a.value()) else { continue; };
         if version != "2" { continue; }
         let Ok(quote) = serde_json::from_str::<Quote>(raw_payload) else { continue; };
         let quantity = *line.quantity() as u64;
-        if quote.v != 2 || quote.install_binding != policy.install_binding || quote.adjustment_variant_gid != policy.adjustment_variant_gid || quote.policy_revision != policy.policy_revision || quote.product_gid != *product.id() || quote.variant_gid != *variant.id() || quote.quantity != quantity || normalized_config_digest(config).as_deref() != Some(quote.config_digest.as_str()) { continue; }
+        if quote.v != 2 || quote.install_binding != policy.install_binding || quote.adjustment_variant_gid != policy.adjustment_variant_gid || quote.policy_revision != policy.policy_revision || quote.product_gid != *product.id() || quote.variant_gid != *variant.id() || quote.quantity != quantity { continue; }
         let expected_total = quote.base_unit_price_cents.saturating_mul(quantity).saturating_add(quote.per_unit_surcharge_cents.saturating_mul(quantity)).saturating_add(quote.flat_surcharge_cents);
         if expected_total != quote.line_total_cents || !valid_signature(&quote, signature) { continue; }
 
