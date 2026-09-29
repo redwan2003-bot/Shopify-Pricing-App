@@ -59,6 +59,12 @@ function fakeShop(initial: Partial<{
         case "ImprintIdAdjustmentVariant":
           data = { productVariantsBulkUpdate: { productVariants: [{ id: "x" }], userErrors: [] } };
           break;
+        case "ImprintIdPublications":
+          data = { publications: { nodes: [{ id: "gid://shopify/Publication/online-store", name: "Online Store" }] } };
+          break;
+        case "ImprintIdAdjustmentPublish":
+          data = { publishablePublish: { userErrors: [] } };
+          break;
         case "ImprintIdPolicySet": {
           const mf = (v.metafields as { value: string }[])[0];
           s.policy = JSON.parse(mf.value);
@@ -87,6 +93,7 @@ function fakeShop(initial: Partial<{
 const FIELD: Record<string, string> = {
   metafieldDefinitionCreate: "ImprintIdDefinitionCreate",
   productCreate: "ImprintIdAdjustmentCreate",
+  publishablePublish: "ImprintIdAdjustmentPublish",
   metafieldsSet: "ImprintIdPolicySet",
   cartTransformCreate: "ImprintIdCartTransformCreate",
   validationCreate: "ImprintIdValidationCreate",
@@ -113,7 +120,7 @@ test("running again changes nothing", async () => {
   const report = await provisionShop(shop.admin);
   assert.equal(report.ok, true);
   assert.deepEqual(report.changed, []);
-  assert.deepEqual(shop.calls, [], "no mutations on a provisioned shop");
+  assert.deepEqual(shop.calls, ["ImprintIdPublications", "ImprintIdAdjustmentPublish"], "publication repair is idempotent");
 });
 
 test("an existing enforced policy is left switched on (the demo store must not be turned off)", async () => {
@@ -121,7 +128,7 @@ test("an existing enforced policy is left switched on (the demo store must not b
   const { admin, state, calls } = fakeShop({ policy: existing, shopDef: true, productDef: true, transform: true, validation: { enabled: true }, adjustments: 1 });
   const report = await provisionShop(admin);
   assert.equal(report.ok, true);
-  assert.deepEqual(calls, []);
+  assert.deepEqual(calls, ["ImprintIdPublications", "ImprintIdAdjustmentPublish"]);
   assert.deepEqual(state.policy, existing);
 });
 
@@ -157,7 +164,7 @@ test("provisioning clears legacy v1 authorization before v2 enforcement", async 
   });
   const report = await provisionShop(admin);
   assert.equal(report.ok, true);
-  assert.deepEqual(calls, ["ImprintIdPolicySet"]);
+  assert.deepEqual(calls, ["ImprintIdPublications", "ImprintIdAdjustmentPublish", "ImprintIdPolicySet"]);
   assert.deepEqual(state.policy, { ...existing, allowLegacyV1: false, policyRevision: 4 });
 });
 
@@ -190,7 +197,7 @@ test("a disabled Validation is re-enabled; duplicate adjustment products stop se
   const off = fakeShop({ policy, shopDef: true, productDef: true, transform: true, validation: { enabled: false }, adjustments: 1 });
   const r1 = await provisionShop(off.admin);
   assert.deepEqual(r1.changed, ["validation"]);
-  assert.deepEqual(off.calls, ["ImprintIdValidationUpdate"]);
+  assert.deepEqual(off.calls, ["ImprintIdPublications", "ImprintIdAdjustmentPublish", "ImprintIdValidationUpdate"]);
 
   const dup = fakeShop({ adjustments: 2 });
   const r2 = await provisionShop(dup.admin);

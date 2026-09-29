@@ -91,6 +91,16 @@ const VARIANT_UPDATE = `#graphql
     productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id } userErrors { field message } }
   }`;
 
+const PUBLICATIONS_QUERY = `#graphql
+  query ImprintIdPublications {
+    publications(first: 50) { nodes { id name } }
+  }`;
+
+const PUBLISHABLE_PUBLISH = `#graphql
+  mutation ImprintIdAdjustmentPublish($id: ID!, $input: [PublicationInput!]!) {
+    publishablePublish(id: $id, input: $input) { userErrors { field message } }
+  }`;
+
 const METAFIELDS_SET = `#graphql
   mutation ImprintIdPolicySet($metafields: [MetafieldsSetInput!]!) {
     metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message code } }
@@ -134,6 +144,19 @@ function payload(data: Record<string, unknown>, field: string): { userErrors?: U
 function assertNoUserErrors(step: ProvisionStep, result: { userErrors?: UserError[] }, allow: (e: UserError) => boolean = () => false) {
   const errors = (result.userErrors ?? []).filter((e) => !allow(e));
   if (errors.length) throw new ProvisionError(step, errors.map((e) => e.message).join("; ").slice(0, 300));
+}
+
+async function publishAdjustmentOnOnlineStore(admin: AdminGraphqlClientLike, productId: string, step: ProvisionStep): Promise<void> {
+  const data = await gql(admin, PUBLICATIONS_QUERY, {});
+  const publications = ((data.publications ?? {}) as { nodes?: { id: string; name: string }[] }).nodes ?? [];
+  const onlineStore = publications.find((publication) => publication.name === "Online Store");
+  if (!onlineStore) throw new ProvisionError(step, "the Online Store publication is unavailable on this shop");
+
+  const result = payload(
+    await gql(admin, PUBLISHABLE_PUBLISH, { id: productId, input: [{ publicationId: onlineStore.id }] }),
+    "publishablePublish",
+  );
+  assertNoUserErrors(step, result);
 }
 
 interface ProvisionState {
@@ -252,6 +275,11 @@ export async function provisionShop(admin: AdminGraphqlClientLike): Promise<Prov
       assertNoUserErrors(step, updated);
       changed.push(step);
     }
+
+    // Cart Transform components must be available to the Online Store sales channel.
+    // This is intentionally idempotent so setup repairs products created before this
+    // publication step was added.
+    await publishAdjustmentOnOnlineStore(admin, adjustment.productId, step);
 
     // 3. Shop enforcement policy — before the Validation (see file comment).
     step = "shop_policy";
