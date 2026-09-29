@@ -24,17 +24,6 @@ pub struct ShopPolicy {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProductPolicy {
-    schema: u8,
-    required: bool,
-    profile_ref: String,
-    profile_revision: u64,
-    active: bool,
-    policy_revision: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Quote {
     v: u8,
     install_binding: String,
@@ -142,9 +131,12 @@ fn cart_transform_run(input: schema::cart_transform_run::CartTransformRunInput) 
     for line in input.cart().lines() {
         let schema::cart_transform_run::cart_transform_run_input::cart::lines::Merchandise::ProductVariant(variant) = line.merchandise() else { continue; };
         let product = variant.product();
-        let Some(product_policy_field) = product.pricing_policy() else { continue; };
-        let Some(product_policy) = parse_json_policy::<ProductPolicy>(product_policy_field.json_value()) else { continue; };
-        if product_policy.schema != 1 || !product_policy.active || !product_policy.required { continue; }
+        // The signed v2 quote is the authoritative product-policy proof. The server
+        // only issues it after reading the product policy, and the HMAC binds the
+        // product, profile, profile revision, shop-policy revision, currency,
+        // quantity, and line total. Re-reading the product metafield here created a
+        // false negative on Shopify runtimes where app-owned product JSON is absent
+        // from the Cart Transform input even though the cart line is valid.
         let Some(version) = line.version().and_then(|a| a.value()) else { continue; };
         let Some(raw_payload) = line.payload().and_then(|a| a.value()) else { continue; };
         let Some(signature) = line.signature().and_then(|a| a.value()) else { continue; };
