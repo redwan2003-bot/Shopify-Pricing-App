@@ -292,9 +292,19 @@ export function runCartTransform(input: NormalizedTransformInput, secret: string
 
       const p = verification.payload;
       operations.push({
-        lineUpdate: {
+        lineExpand: {
           cartLineId: line.id,
-          price: priceAdjustment(centsToDecimalString(Math.floor(p.lineTotalCents / p.quantity), PAR_RATE)),
+          expandedCartItems: buildExpandedItems(
+            {
+              baseVariantId: p.variantGid,
+              quantity: p.quantity,
+              baseUnitPriceCents: p.baseUnitPriceCents,
+              perUnitSurchargeCents: p.perUnitSurchargeCents,
+              flatSurchargeCents: p.flatSurchargeCents,
+              adjustmentVariantId: p.adjustmentVariantGid,
+            },
+            PAR_RATE,
+          ),
         },
       });
       continue;
