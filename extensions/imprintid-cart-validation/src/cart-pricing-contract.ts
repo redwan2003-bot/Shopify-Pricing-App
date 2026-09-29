@@ -320,8 +320,8 @@ function isSafeNonNegativeInteger(value: unknown, max: number): value is number 
  * components (see `extensions/imprintid-cart-pricing/src/cart_transform_run.ts`):
  *
  *   base component      : merchandise = base variant,      qty = quantity, per-unit = baseUnitPriceCents
- *   per-unit surcharge  : merchandise = adjustment variant, qty = quantity, per-unit = perUnitSurchargeCents  (only if > 0)
- *   flat surcharge      : merchandise = adjustment variant, qty = 1,        per-unit = flatSurchargeCents      (only if > 0)
+ *   surcharge component : merchandise = adjustment variant, qty = 1, per-unit =
+ *                         perUnitSurchargeCents * quantity + flatSurchargeCents (only if > 0)
  *
  *   lineTotalCents = baseUnitPriceCents * quantity
  *                  + perUnitSurchargeCents * quantity
@@ -334,11 +334,10 @@ export function computeLineTotalCents(c: MonetaryComponents): number {
   return c.baseUnitPriceCents * c.quantity + c.perUnitSurchargeCents * c.quantity + c.flatSurchargeCents;
 }
 
-/** How many expanded components the Transform will emit for these components:
- * always the base, plus each non-zero surcharge. Zero-valued surcharges are omitted
- * entirely (never sent as a zero-amount item). */
+/** How many expanded components the Transform will emit: the base plus one combined
+ * surcharge component when the total surcharge is non-zero. */
 export function expectedExpandedComponentCount(c: MonetaryComponents): 1 | 2 | 3 {
-  return (1 + (c.perUnitSurchargeCents > 0 ? 1 : 0) + (c.flatSurchargeCents > 0 ? 1 : 0)) as 1 | 2 | 3;
+  return (1 + (c.perUnitSurchargeCents * c.quantity + c.flatSurchargeCents > 0 ? 1 : 0)) as 1 | 2;
 }
 
 /**

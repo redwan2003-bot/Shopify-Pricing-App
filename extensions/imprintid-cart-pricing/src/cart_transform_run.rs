@@ -150,8 +150,8 @@ fn cart_transform_run(input: schema::cart_transform_run::CartTransformRunInput) 
 
         let price = |amount| schema::ExpandedItemPriceAdjustment { adjustment: schema::ExpandedItemPriceAdjustmentValue::FixedPricePerUnit(schema::ExpandedItemFixedPricePerUnitAdjustment { amount: cents(amount) }) };
         let mut expanded = vec![schema::ExpandedItem { merchandise_id: quote.variant_gid, quantity: *line.quantity(), price: Some(price(quote.base_unit_price_cents)), attributes: None }];
-        if quote.per_unit_surcharge_cents > 0 { expanded.push(schema::ExpandedItem { merchandise_id: quote.adjustment_variant_gid.clone(), quantity: *line.quantity(), price: Some(price(quote.per_unit_surcharge_cents)), attributes: None }); }
-        if quote.flat_surcharge_cents > 0 { expanded.push(schema::ExpandedItem { merchandise_id: quote.adjustment_variant_gid, quantity: 1, price: Some(price(quote.flat_surcharge_cents)), attributes: None }); }
+        let surcharge_total = quote.per_unit_surcharge_cents.saturating_mul(quantity).saturating_add(quote.flat_surcharge_cents);
+        if surcharge_total > 0 { expanded.push(schema::ExpandedItem { merchandise_id: quote.adjustment_variant_gid, quantity: 1, price: Some(price(surcharge_total)), attributes: None }); }
         operations.push(schema::Operation::LineExpand(schema::LineExpandOperation { cart_line_id: line.id().to_string(), expanded_cart_items: expanded, price: None, title: None, image: None }));
     }
     Ok(schema::CartTransformRunResult { operations })

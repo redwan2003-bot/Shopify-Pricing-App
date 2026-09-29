@@ -190,18 +190,12 @@ function buildExpandedItems(
       price: priceAdjustment(centsToDecimalString(payload.baseUnitPriceCents, presentmentRate)),
     },
   ];
-  if (payload.perUnitSurchargeCents > 0) {
-    items.push({
-      merchandiseId: payload.adjustmentVariantId,
-      quantity: payload.quantity,
-      price: priceAdjustment(centsToDecimalString(payload.perUnitSurchargeCents, presentmentRate)),
-    });
-  }
-  if (payload.flatSurchargeCents > 0) {
+  const surchargeTotal = payload.perUnitSurchargeCents * payload.quantity + payload.flatSurchargeCents;
+  if (surchargeTotal > 0) {
     items.push({
       merchandiseId: payload.adjustmentVariantId,
       quantity: 1,
-      price: priceAdjustment(centsToDecimalString(payload.flatSurchargeCents, presentmentRate)),
+      price: priceAdjustment(centsToDecimalString(surchargeTotal, presentmentRate)),
     });
   }
   return items;

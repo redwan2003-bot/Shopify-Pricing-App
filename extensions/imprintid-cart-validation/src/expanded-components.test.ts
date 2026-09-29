@@ -21,7 +21,7 @@ function payload(over: Partial<CartPricingPayloadV2> = {}): CartPricingPayloadV2
   };
 }
 
-const EXPECTED = (): ExpectedComponent[] => expectedExpandedComponents(payload()); // base + per-unit + flat
+const EXPECTED = (): ExpectedComponent[] => expectedExpandedComponents(payload()); // base + combined surcharge
 
 // ---------------------------------------------------------------------------
 // hasComponentMultisetMismatch — semantics: `true` ⇔ THERE IS a mismatch
@@ -45,13 +45,13 @@ test("SAME items, DIFFERENT ORDER → false (order-independent)", () => {
 
 test("DUPLICATE component → true", () => {
   const base = EXPECTED();
-  const observed = [...base, base[2]!].map((c) => ({ merchandiseGid: c.merchandiseGid, quantity: c.quantity, perUnitCents: c.perUnitCents }));
+  const observed = [...base, base[1]!].map((c) => ({ merchandiseGid: c.merchandiseGid, quantity: c.quantity, perUnitCents: c.perUnitCents }));
   assert.equal(hasComponentMultisetMismatch(base, observed), true);
 });
 
 test("MISSING component → true", () => {
   const base = EXPECTED();
-  const observed = base.slice(0, 2).map((c) => ({ merchandiseGid: c.merchandiseGid, quantity: c.quantity, perUnitCents: c.perUnitCents }));
+  const observed = base.slice(0, 1).map((c) => ({ merchandiseGid: c.merchandiseGid, quantity: c.quantity, perUnitCents: c.perUnitCents }));
   assert.equal(hasComponentMultisetMismatch(base, observed), true);
 });
 
@@ -72,7 +72,7 @@ test("CHANGED quantity → true", () => {
 
 test("CHANGED cents → true", () => {
   const base = EXPECTED();
-  const observed = base.map((c, i) => ({ merchandiseGid: c.merchandiseGid, quantity: c.quantity, perUnitCents: i === 2 ? c.perUnitCents - 1 : c.perUnitCents }));
+  const observed = base.map((c, i) => ({ merchandiseGid: c.merchandiseGid, quantity: c.quantity, perUnitCents: i === 1 ? c.perUnitCents - 1 : c.perUnitCents }));
   assert.equal(hasComponentMultisetMismatch(base, observed), true);
 });
 
@@ -97,8 +97,8 @@ test("expectedExpandedComponents: base-only when both surcharges are zero", () =
   assert.deepEqual(comps, [{ merchandiseGid: VAR, quantity: 100, perUnitCents: 137, kind: "base" }]);
 });
 
-test("expectedExpandedComponents: base + flat only when per-unit surcharge is zero", () => {
+test("expectedExpandedComponents: base + surcharge when the total surcharge is non-zero", () => {
   const comps = expectedExpandedComponents(payload({ perUnitSurchargeCents: 0, flatSurchargeCents: 4500 }));
-  assert.deepEqual(comps.map((c) => c.kind), ["base", "flat"]);
+  assert.deepEqual(comps.map((c) => c.kind), ["base", "surcharge"]);
   assert.equal(comps[1]!.quantity, 1);
 });

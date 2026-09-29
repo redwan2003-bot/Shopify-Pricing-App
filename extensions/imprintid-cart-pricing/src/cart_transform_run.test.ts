@@ -132,7 +132,7 @@ test("a presentment currency rate of \"1\" leaves single-currency carts byte-ide
   assert.ok("lineExpand" in op && op.lineExpand);
   if ("lineExpand" in op && op.lineExpand) {
     const amounts = op.lineExpand.expandedCartItems.map((i) => i.price!.adjustment.fixedPricePerUnit.amount);
-    assert.deepEqual(amounts, ["0.98", "0.20", "64.00"]);
+    assert.deepEqual(amounts, ["0.98", "264.00"]);
   }
 });
 
@@ -168,7 +168,7 @@ test("10. a single valid v1 cart line (authorized) produces exactly one lineExpa
   assert.ok("lineExpand" in op && op.lineExpand);
   if ("lineExpand" in op && op.lineExpand) {
     assert.equal(op.lineExpand.cartLineId, "gid://shopify/CartLine/1");
-    assert.equal(op.lineExpand.expandedCartItems.length, 3);
+    assert.equal(op.lineExpand.expandedCartItems.length, 2);
   }
 });
 
@@ -244,7 +244,7 @@ test("18. odd, non-round-dollar cent amounts are represented exactly", () => {
   const op = result.operations[0]!;
   assert.ok("lineExpand" in op && op.lineExpand);
   if ("lineExpand" in op && op.lineExpand) {
-    assert.deepEqual(op.lineExpand.expandedCartItems.map((i) => i.price!.adjustment.fixedPricePerUnit.amount), ["1.37", "0.07", "45.01"]);
+    assert.deepEqual(op.lineExpand.expandedCartItems.map((i) => i.price!.adjustment.fixedPricePerUnit.amount), ["1.37", "115.01"]);
   }
 });
 

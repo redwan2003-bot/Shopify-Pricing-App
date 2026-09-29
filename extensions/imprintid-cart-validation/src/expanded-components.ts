@@ -5,14 +5,14 @@ import type { CartPricingPayloadV2 } from "./cart-pricing-contract.ts";
  * `extensions/imprintid-cart-pricing/src/cart_transform_run.ts#buildExpandedItems`:
  *
  *   base component      : merchandise = base variant,       quantity = payload.quantity, per-unit = baseUnitPriceCents
- *   per-unit surcharge  : merchandise = adjustment variant, quantity = payload.quantity, per-unit = perUnitSurchargeCents  (only if > 0)
- *   flat surcharge      : merchandise = adjustment variant, quantity = 1,                per-unit = flatSurchargeCents      (only if > 0)
+ *   surcharge component  : merchandise = adjustment variant, quantity = 1, per-unit =
+ *                          perUnitSurchargeCents * payload.quantity + flatSurchargeCents (only if > 0)
  *
  * `drift.test.ts` cross-checks `expectedExpandedComponents` against the Cart Transform's
  * real `runCartTransform` output for every golden vector, so the two cannot drift.
  */
 
-export type ExpectedComponentKind = "base" | "per_unit" | "flat";
+export type ExpectedComponentKind = "base" | "surcharge";
 
 export interface ExpectedComponent {
   merchandiseGid: string;
@@ -26,11 +26,9 @@ export function expectedExpandedComponents(p: CartPricingPayloadV2): ExpectedCom
   const out: ExpectedComponent[] = [
     { merchandiseGid: p.variantGid, quantity: p.quantity, perUnitCents: p.baseUnitPriceCents, kind: "base" },
   ];
-  if (p.perUnitSurchargeCents > 0) {
-    out.push({ merchandiseGid: p.adjustmentVariantGid, quantity: p.quantity, perUnitCents: p.perUnitSurchargeCents, kind: "per_unit" });
-  }
-  if (p.flatSurchargeCents > 0) {
-    out.push({ merchandiseGid: p.adjustmentVariantGid, quantity: 1, perUnitCents: p.flatSurchargeCents, kind: "flat" });
+  const surchargeTotal = p.perUnitSurchargeCents * p.quantity + p.flatSurchargeCents;
+  if (surchargeTotal > 0) {
+    out.push({ merchandiseGid: p.adjustmentVariantGid, quantity: 1, perUnitCents: surchargeTotal, kind: "surcharge" });
   }
   return out;
 }
