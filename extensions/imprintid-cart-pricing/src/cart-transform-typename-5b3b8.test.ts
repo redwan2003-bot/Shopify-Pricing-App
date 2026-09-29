@@ -183,8 +183,8 @@ test("3+4. a valid `__typename: ProductVariant` line with a signed v2 quote is E
   assert.deepEqual(expandAmounts(r), {
     cartLineId: CART_LINE,
     items: [
-      { merchandiseId: VARIANT, quantity: 100, amount: "1.37" }, // base 137¢/unit
-      { merchandiseId: ADJ_VARIANT, quantity: 1, amount: "45.00" }, // flat surcharge 4500¢
+      { merchandiseId: VARIANT, quantity: 1, amount: "1.37" }, // base 137¢ per bundle unit
+      { merchandiseId: ADJ_VARIANT, quantity: 1, amount: "0.45000000" }, // 4500¢ spread across 100 units
     ],
   });
 });

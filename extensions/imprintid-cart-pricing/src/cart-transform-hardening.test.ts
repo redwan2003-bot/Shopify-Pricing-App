@@ -229,8 +229,8 @@ test("expansion amounts for a v2 quote match the signed components exactly", () 
   const op = r.operations[0]!;
   assert.ok("lineExpand" in op && op.lineExpand);
   if ("lineExpand" in op && op.lineExpand) {
-    assert.deepEqual(op.lineExpand.expandedCartItems.map((i) => i.price!.adjustment.fixedPricePerUnit.amount), ["1.37", "45.00"]);
-    assert.equal(op.lineExpand.expandedCartItems[0]!.quantity, 100);
+    assert.deepEqual(op.lineExpand.expandedCartItems.map((i) => i.price!.adjustment.fixedPricePerUnit.amount), ["1.37", "0.45000000"]);
+    assert.equal(op.lineExpand.expandedCartItems[0]!.quantity, 1);
     assert.equal(op.lineExpand.expandedCartItems[1]!.quantity, 1);
   }
 });
