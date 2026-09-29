@@ -73,10 +73,10 @@ test("audit: cart_validations_generate_run.graphql requests `merchandise.__typen
 // --- 10. Validation blocks a required-price line when the Transform cannot enforce ---
 
 test("10. an enabled pilot required-price line is BLOCKED by Validation (targets $.cart) while safe enforcement is unconfirmed", () => {
-  const errs = runValidation(input([line()], SHOP("pilot")), SECRET);
+  const errs = runValidation(input([line()], SHOP("pilot"), "CHECKOUT_INTERACTION"), SECRET);
   assert.ok(errs.length >= 1, "a required line with no confirmed enforcement must be blocked");
   const exported = cartValidationsGenerateRun({
-    buyerJourney: { step: "CART_INTERACTION" },
+    buyerJourney: { step: "CHECKOUT_INTERACTION" },
     shop: { enforcementPolicy: { jsonValue: SHOP("pilot") } },
     cart: {
       lines: [
@@ -102,7 +102,7 @@ test("10. an enabled pilot required-price line is BLOCKED by Validation (targets
 });
 
 test("10b. universal mode also blocks a required-price line under the same condition", () => {
-  assert.ok(runValidation(input([line()], SHOP("universal")), SECRET).length >= 1);
+  assert.ok(runValidation(input([line()], SHOP("universal"), "CHECKOUT_INTERACTION"), SECRET).length >= 1);
 });
 
 // --- 11. Validation remains a no-op while enforcement is disabled -------------------

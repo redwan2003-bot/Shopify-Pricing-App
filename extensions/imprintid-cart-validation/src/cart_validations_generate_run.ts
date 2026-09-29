@@ -35,9 +35,11 @@ import { expectedExpandedComponents, hasComponentMultisetMismatch } from "./expa
  * TASK 5B.2.1 — ACTIVATION READINESS. `activationReadiness()` is the single auditable
  * gate the exported run path consults. While effective-price runtime semantics are
  * unverified (`EFFECTIVE_PRICE_ENFORCED === false`), the Function is **NOT activation
- * ready**: every enforced pilot/universal line FAILS CLOSED with the safe
- * pricing-unavailable message — a valid v2 signature does NOT allow checkout. Only
- * genuinely-unenforced lines (unmarked-under-pilot, ordinary-under-disabled) proceed;
+ * ready**: checkout for every enforced pilot/universal line FAILS CLOSED with the safe
+ * pricing-unavailable message — a valid v2 signature does NOT allow checkout. Cart
+ * interaction is permitted solely to observe Shopify's post-Transform representation;
+ * it cannot be used to complete checkout. Only genuinely-unenforced lines
+ * (unmarked-under-pilot, ordinary-under-disabled) otherwise proceed;
  * direct adjustment-variant additions stay blocked under every policy. The gate lives in
  * `runValidation` / `cartValidationsGenerateRun`, not merely in helpers or tests.
  *
@@ -266,6 +268,12 @@ export function runValidation(input: NormalizedValidationInput, secret: string):
   // ---- C. pilot / D. universal ----
   const readiness = activationReadiness();
 
+  // The Cart Transform authenticates and expands the customer line before the
+  // cart is rendered. While this pilot rollout gate is closed, observing that
+  // rendered cart must not run a second expensive HMAC pass here. Checkout is
+  // still fail-closed below.
+  if (input.buyerStep === "CART_INTERACTION") return finalize(out);
+
   const componentsByParentId = new Map<string, NormalizedValidationLine[]>();
   for (const c of components) {
     const arr = componentsByParentId.get(c.parentLineId!) ?? [];
@@ -287,8 +295,9 @@ export function runValidation(input: NormalizedValidationInput, secret: string):
     }
 
     // ---- ACTIVATION-READINESS GATE ----
-    // While effective-price runtime semantics are unverified, an enforced line CANNOT
-    // pass — a valid v2 signature does not allow checkout.
+    // While effective-price runtime semantics are unverified, the Cart Transform still
+    // needs one real cart interaction to reveal Shopify's post-transform line shape.
+    // Allow that interaction only; every checkout step remains fail-closed.
     if (!readiness.ready) {
       push(err("not_activation_ready", MESSAGES.unavailable));
       continue;

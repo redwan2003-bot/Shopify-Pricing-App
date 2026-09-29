@@ -67,7 +67,7 @@ function v2Line(over: Partial<NormalizedValidationLine> = {}, payloadOver: Recor
   });
 }
 
-function input(lines: NormalizedValidationLine[], shopPolicyJson: unknown, buyerStep = "CART_INTERACTION"): NormalizedValidationInput {
+function input(lines: NormalizedValidationLine[], shopPolicyJson: unknown, buyerStep = "CHECKOUT_INTERACTION"): NormalizedValidationInput {
   return { buyerStep, shopPolicyJson, lines };
 }
 
@@ -85,14 +85,14 @@ test("§4 activationReadiness(): NOT ready while effective-price runtime semanti
   if (!r.ready) assert.equal(r.reason, "effective_price_runtime_unverified");
 });
 
-test("§1 a fully valid signed v2 enforced quote is BLOCKED while price verification is disabled (pilot)", () => {
-  const r = runValidation(input([v2Line()], SHOP("pilot")), SECRET);
+test("§1 a fully valid signed v2 enforced quote is BLOCKED at checkout while price verification is disabled (pilot)", () => {
+  const r = runValidation(input([v2Line()], SHOP("pilot"), "CHECKOUT_INTERACTION"), SECRET);
   assert.deepEqual(codes(r), ["not_activation_ready"]);
   assert.deepEqual(messages(r), [UNAVAILABLE]);
 });
 
-test("§1 a fully valid signed v2 enforced quote is BLOCKED while price verification is disabled (universal)", () => {
-  const r = runValidation(input([v2Line()], SHOP("universal")), SECRET);
+test("§1 a fully valid signed v2 enforced quote is BLOCKED at checkout while price verification is disabled (universal)", () => {
+  const r = runValidation(input([v2Line()], SHOP("universal"), "CHECKOUT_INTERACTION"), SECRET);
   assert.deepEqual(codes(r), ["not_activation_ready"]);
 });
 
@@ -111,10 +111,10 @@ test("§1 direct adjustment-variant addition is BLOCKED under every policy, even
   }
 });
 
-test("§1 the readiness gate is in the EXPORTED path (cartValidationsGenerateRun blocks a valid quote)", () => {
+test("§1 the readiness gate is in the EXPORTED path (cart interaction proceeds, checkout is blocked)", () => {
   const q = v2Payload();
   const result = cartValidationsGenerateRun({
-    buyerJourney: { step: "CART_INTERACTION" },
+    buyerJourney: { step: "CHECKOUT_INTERACTION" },
     shop: { enforcementPolicy: { jsonValue: SHOP("pilot") } },
     cart: {
       lines: [
@@ -134,6 +134,10 @@ test("§1 the readiness gate is in the EXPORTED path (cartValidationsGenerateRun
   assert.equal(errs.length, 1);
   assert.equal(errs[0]!.message, UNAVAILABLE);
   assert.equal(errs[0]!.target, "$.cart");
+});
+
+test("§1 a valid signed quote is allowed during cart interaction so the Transform can be observed", () => {
+  assert.deepEqual(runValidation(input([v2Line()], SHOP("pilot"), "CART_INTERACTION"), SECRET), []);
 });
 
 // ===========================================================================
@@ -197,11 +201,10 @@ function componentSetup(payloadOver: Record<string, unknown> = {}) {
   return { parent, baseChild, flatChild, payload: q.payload };
 }
 
-test("§2 a legitimate expanded component set (complete parent resolves + full quote revalidates) — component checks pass; parent still blocked by readiness gate", () => {
+test("§2 a legitimate expanded component set passes cart interaction while the runtime shape is being observed", () => {
   const { parent, baseChild, flatChild } = componentSetup();
-  const r = runValidation(input([parent, baseChild, flatChild], SHOP("universal")), SECRET);
-  // Only the readiness gate fires (on the parent) — NO component_forgery / orphan_component.
-  assert.deepEqual(codes(r), ["not_activation_ready"]);
+  const r = runValidation(input([parent, baseChild, flatChild], SHOP("universal"), "CART_INTERACTION"), SECRET);
+  assert.deepEqual(codes(r), []);
 });
 
 test("§2 a component whose parent id does NOT resolve to a complete top-level line fails closed", () => {
@@ -301,7 +304,8 @@ test("§3 an adjustment component naming a variant the parent quote does NOT spe
 test("§3 multiset comparison is order-independent (components reversed still validate cleanly at the component level)", () => {
   const { parent, baseChild, flatChild } = componentSetup();
   const r = runValidation(input([flatChild, baseChild, parent], SHOP("universal")), SECRET);
-  assert.deepEqual(codes(r), ["not_activation_ready"]); // no component error regardless of order
+  assert.ok(codes(r).includes("not_activation_ready")); // readiness still blocks checkout; component order adds no integrity error
+  assert.ok(!codes(r).includes("component_forgery"));
 });
 
 test("§3 a cart discount does NOT cause a false component mismatch — component amounts come from amountPerQuantity (pre-discount)", () => {
@@ -336,13 +340,13 @@ test("malformed / oversized v2 attributes on an enforced line are blocked", () =
 
 test("errors are bounded (≤5), deterministic, deduplicated, all target $.cart", () => {
   const lines = Array.from({ length: 12 }, (_, i) => v2Line({ id: `gid://shopify/CartLine/${i}` }));
-  const r = runValidation(input(lines, SHOP("universal")), SECRET);
+  const r = runValidation(input(lines, SHOP("universal"), "CHECKOUT_INTERACTION"), SECRET);
   assert.ok(r.length >= 1 && r.length <= 5);
   assert.deepEqual(r, [...r].sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0)));
   assert.equal(new Set(r.map((e) => e.message)).size, r.length);
 
   const result = cartValidationsGenerateRun({
-    buyerJourney: { step: "CART_INTERACTION" },
+    buyerJourney: { step: "CHECKOUT_INTERACTION" },
     shop: { enforcementPolicy: { jsonValue: SHOP("universal") } },
     cart: {
       lines: lines.map((l) => ({
@@ -388,7 +392,8 @@ test("no permissive catch branch: the Function source has no try/catch that coul
 
 test("the exported run path contains the activation-readiness guard", () => {
   assert.ok(/activationReadiness\(\)/.test(SRC));
-  assert.ok(/if\s*\(\s*!readiness\.ready\s*\)\s*\{[\s\S]*?not_activation_ready/.test(SRC), "readiness gate emits not_activation_ready in runValidation");
+  assert.ok(/input\.buyerStep\s*===\s*"CART_INTERACTION"[\s\S]*?return finalize\(out\)/.test(SRC), "readiness gate permits cart observation without an extra HMAC pass");
+  assert.ok(/if \(!readiness\.ready\)[\s\S]*?not_activation_ready/.test(SRC), "readiness gate blocks checkout");
 });
 
 test("buyerJourney.step is normalized and available (empty cart → no errors at every step)", () => {
