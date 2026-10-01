@@ -30,7 +30,6 @@ export default function App() {
         <s-link href="/app/inquiries">Inquiries</s-link>
         <s-link href="/app/order-workflows">Order workflows</s-link>
         <s-link href="/app/settings">Settings</s-link>
-        <s-link href="/app/billing">Billing</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>

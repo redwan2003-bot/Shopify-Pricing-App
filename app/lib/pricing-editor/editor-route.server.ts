@@ -6,7 +6,6 @@ import prisma from "../../db.server";
 import { importPricingProfile, PricingImportValidationError } from "../pricing-import/import.ts";
 import { applyLinkReport, buildLinkReport } from "../pricing-import/link-products.ts";
 import { readShopPolicyContext } from "../catalog/admin-client.ts";
-import { readEntitlement } from "../billing/entitlement.ts";
 import { blankDraft, draftToImportInput, profileToDraft, type DraftError, type PricingDraft } from "./draft.ts";
 
 /** Loaders/actions for the pricing profile list and editor pages (JSX-free so they can be exercised directly). */
@@ -105,12 +104,11 @@ const PROFILE_INCLUDE = {
 } satisfies Prisma.PricingProfileInclude;
 
 export const editLoader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session, admin, billing } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const store = await storeFor(session.shop);
   const shop = await readShopPolicyContext(admin);
   const shopCurrency = shop.ok ? shop.shopCurrency : null;
-  const entitlement = await readEntitlement(billing.check);
-  const canEdit = entitlement.hasActivePayment;
+  const canEdit = true;
 
   if (params.id === "new") {
     return { isNew: true as const, id: null, draft: blankDraft(shopCurrency ?? "USD"), linkedProducts: [] as string[], shopCurrency, canEdit };
@@ -132,19 +130,8 @@ export type SaveResult =
   | { ok: true; message: string; linked: boolean };
 
 export const editAction = async ({ request, params }: ActionFunctionArgs): Promise<SaveResult | Response> => {
-  const { session, admin, billing, redirect } = await authenticate.admin(request);
+  const { session, admin, redirect } = await authenticate.admin(request);
   const store = await storeFor(session.shop);
-
-  // Billing gate: editing/creating profiles requires an active subscription. Already-linked
-  // products keep quoting their last saved prices on the storefront regardless — this gate
-  // covers writes only, never storefront pricing (decision: 2026-09-25, BILLING_ARCHITECTURE.md).
-  const entitlement = await readEntitlement(billing.check);
-  if (!entitlement.hasActivePayment) {
-    return {
-      ok: false,
-      message: "Your ImprintID Dynamic Pricing subscription isn't active, so changes can't be saved right now. Your storefront keeps quoting existing prices. Subscribe from the Billing page to resume editing.",
-    };
-  }
 
   const form = await request.formData();
 
