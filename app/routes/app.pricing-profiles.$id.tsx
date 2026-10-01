@@ -11,6 +11,7 @@ import {
   type DraftError,
   type PricingDraft,
 } from "../lib/pricing-editor/draft.ts";
+import { OptionGroupsEditor } from "./app.pricing-profiles/OptionGroupsEditor.tsx";
 
 export const loader = editLoader;
 export const action = editAction;
@@ -206,59 +207,9 @@ export default function PricingProfileEditor() {
           </div>
         </s-section>
 
-        <s-section heading="Options (price per piece)">
-          <div style={{ display: "grid", gap: "0.75rem" }}>
-            {draft.optionGroups.map((g, gi) => (
-              <div key={gi} style={box}>
-                <div style={row}>
-                  <Field label="Group name" value={g.name} onChange={(v) => update((d) => (d.optionGroups[gi]!.name = v))} error={err(`optionGroups.${gi}.name`)} width="16rem" />
-                  <label style={{ display: "grid", gap: "0.2rem" }}>
-                    <span style={{ fontSize: "0.8rem", color: "#616161" }}>Shown under</span>
-                    <select value={g.kind} onChange={(e) => update((d) => (d.optionGroups[gi]!.kind = e.target.value))}>
-                      <option value="ATTACHMENT">Attachments</option>
-                      <option value="FEATURE">Optional features</option>
-                      <option value="GENERIC">Optional features (generic)</option>
-                    </select>
-                  </label>
-                  <label style={{ display: "flex", gap: "0.35rem", alignItems: "center", paddingBottom: "0.35rem" }}>
-                    <input type="checkbox" checked={g.isRequired} onChange={(e) => update((d) => (d.optionGroups[gi]!.isRequired = e.target.checked))} />
-                    Customer must choose one
-                  </label>
-                  <button type="button" onClick={() => update((d) => d.optionGroups.splice(gi, 1))}>
-                    Remove group
-                  </button>
-                </div>
-                {err(`optionGroups.${gi}.values`) ? <span style={{ color: "#b42318" }}>{err(`optionGroups.${gi}.values`)}</span> : null}
-                {g.values.map((v, vi) => (
-                  <div key={vi} style={row}>
-                    <Field label="Choice" value={v.label} onChange={(val) => update((d) => (d.optionGroups[gi]!.values[vi]!.label = val))} error={err(`optionGroups.${gi}.values.${vi}.label`)} width="14rem" />
-                    <Field label="List (+)" value={v.list} inputMode="decimal" onChange={(val) => update((d) => (d.optionGroups[gi]!.values[vi]!.list = val))} error={err(`optionGroups.${gi}.values.${vi}.list`)} width="7rem" />
-                    <Field label="Net (+)" value={v.net} inputMode="decimal" placeholder="same as list" onChange={(val) => update((d) => (d.optionGroups[gi]!.values[vi]!.net = val))} error={err(`optionGroups.${gi}.values.${vi}.net`)} width="7rem" />
-                    <label style={{ display: "flex", gap: "0.35rem", alignItems: "center", paddingBottom: "0.35rem" }}>
-                      <input type="checkbox" checked={v.isDefault} onChange={(e) => update((d) => (d.optionGroups[gi]!.values[vi]!.isDefault = e.target.checked))} />
-                      Included
-                    </label>
-                    <button type="button" onClick={() => update((d) => d.optionGroups[gi]!.values.splice(vi, 1))} aria-label={`Remove ${v.label || "choice"}`}>
-                      Remove
-                    </button>
-                  </div>
-                ))}
-                <div>
-                  <button type="button" onClick={() => update((d) => d.optionGroups[gi]!.values.push({ label: "", code: "", list: "", net: "", isDefault: false }))}>
-                    Add choice
-                  </button>
-                </div>
-              </div>
-            ))}
-            <div>
-              <button
-                type="button"
-                onClick={() => update((d) => d.optionGroups.push({ name: "", kind: "ATTACHMENT", isRequired: false, values: [{ label: "", code: "", list: "", net: "", isDefault: false }] }))}
-              >
-                Add option group
-              </button>
-            </div>
-          </div>
+        <s-section heading="Optional features (price per piece)">
+          <p style={{ color: "#616161" }}>Attachment groups are managed from the dedicated Attachments menu.</p>
+          <OptionGroupsEditor draft={draft} update={update} onlyFeatures />
         </s-section>
 
         <s-section heading="Production">
