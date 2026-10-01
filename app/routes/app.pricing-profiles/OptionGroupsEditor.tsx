@@ -8,7 +8,7 @@ function Field({ label, value, onChange, width, inputMode, placeholder }: { labe
 }
 
 export function OptionGroupsEditor({ draft, update, onlyAttachments = false, onlyFeatures = false }: { draft: PricingDraft; update: (fn: (draft: PricingDraft) => void) => void; onlyAttachments?: boolean; onlyFeatures?: boolean }) {
-  const groups = draft.optionGroups.map((group, index) => ({ group, index })).filter(({ group }) => (!onlyAttachments || group.kind === "ATTACHMENT") && (!onlyFeatures || group.kind !== "ATTACHMENT"));
+  const groups = draft.optionGroups.map((group, index) => ({ group, index, isAttachment: group.kind === "ATTACHMENT" || /attachment/i.test(group.name) })).filter(({ isAttachment }) => (!onlyAttachments || isAttachment) && (!onlyFeatures || !isAttachment));
   return <div style={{ display: "grid", gap: "0.75rem" }}>
     {groups.map(({ group: g, index: gi }) => <div key={gi} style={box}>
       <div style={row}>

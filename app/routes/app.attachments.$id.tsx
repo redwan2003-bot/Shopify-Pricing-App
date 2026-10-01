@@ -16,10 +16,12 @@ export default function AttachmentsEditor() {
   const [draft, setDraft] = useState<PricingDraft>(data.draft);
   useEffect(() => setDraft(data.draft), [data.draft]);
   const update = (fn: (draft: PricingDraft) => void) => setDraft((current) => { const next = structuredClone(current); fn(next); return next; });
-  const count = draft.optionGroups.filter((group) => group.kind === "ATTACHMENT").length;
+  const count = draft.optionGroups.filter((group) => group.kind === "ATTACHMENT" || /attachment/i.test(group.name)).length;
+  const submissionDraft = structuredClone(draft);
+  for (const group of submissionDraft.optionGroups) if (group.kind !== "ATTACHMENT" && /attachment/i.test(group.name)) group.kind = "ATTACHMENT";
   return <s-page heading={`Attachments · ${draft.sku || "pricing profile"}`}>
     <s-section><Link to="/app/attachments">← All attachments</Link><p>Edit verified attachment codes and per-piece prices. Other profile settings remain in Pricing profiles.</p>{result ? <p role={result.ok ? "status" : "alert"} style={{ color: result.ok ? "#1a7f37" : "#b42318" }}>{result.message}</p> : null}</s-section>
-    <Form method="post"><input type="hidden" name="draft" value={JSON.stringify(draft)} /><s-section heading={`${count} attachment group${count === 1 ? "" : "s"}`}><OptionGroupsEditor draft={draft} update={update} onlyAttachments /></s-section><s-section><button type="submit" disabled={navigation.state !== "idle" || !data.canEdit}>{navigation.state !== "idle" ? "Saving…" : "Save attachments"}</button>{!data.canEdit ? <p>Subscription inactive: attachments are view-only.</p> : null}</s-section></Form>
+    <Form method="post"><input type="hidden" name="draft" value={JSON.stringify(submissionDraft)} /><s-section heading={`${count} attachment group${count === 1 ? "" : "s"}`}><OptionGroupsEditor draft={draft} update={update} onlyAttachments /></s-section><s-section><button type="submit" disabled={navigation.state !== "idle" || !data.canEdit}>{navigation.state !== "idle" ? "Saving…" : "Save attachments"}</button>{!data.canEdit ? <p>Subscription inactive: attachments are view-only.</p> : null}</s-section></Form>
   </s-page>;
 }
 
