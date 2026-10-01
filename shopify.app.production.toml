@@ -37,8 +37,12 @@ api_version = "2026-07"
   uri = "/webhooks/compliance"
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
 
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/create"
+  topics = [ "orders/create" ]
+
 [access_scopes]
-scopes = "write_products,write_cart_transforms,write_validations,read_publications"
+scopes = "write_products,write_cart_transforms,write_validations,write_publications,read_orders"
 
 [auth]
 redirect_urls = [

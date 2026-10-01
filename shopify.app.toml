@@ -41,6 +41,10 @@ api_version = "2026-07"
   uri = "/webhooks/compliance"
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
 
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/create"
+  topics = [ "orders/create" ]
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 #
@@ -54,7 +58,7 @@ api_version = "2026-07"
 # (App-reserved shop metafields — `$app:imprintid/enforcement_policy` — are writable by the
 #  owning app without a dedicated scope. `write_metaobjects` / `write_metaobject_definitions`
 #  from the Shopify app template were dropped — this app models custom data as METAFIELDS.)
-scopes = "write_products,write_cart_transforms,write_validations,read_publications"
+scopes = "write_products,write_cart_transforms,write_validations,write_publications,read_orders"
 
 [auth]
 redirect_urls = [
