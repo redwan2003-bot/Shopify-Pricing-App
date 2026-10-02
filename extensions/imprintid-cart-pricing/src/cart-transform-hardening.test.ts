@@ -192,6 +192,10 @@ test("5B.1.1: pilot + allowLegacyV1=true + product policy → a valid v1 fixture
   assert.equal(runCartTransform(input([v1Line("l1")], shopPolicy("pilot", { allowLegacyV1: true })), SECRET).operations.length, 1);
 });
 
+test("5B.1.1: pilot + allowLegacyV1=true still processes a valid v2 quote", () => {
+  assert.equal(runCartTransform(input([v2Line("l1")], shopPolicy("pilot", { allowLegacyV1: true })), SECRET).operations.length, 1);
+});
+
 test("5B.1.1: pilot + allowLegacyV1=false → v1 rejected", () => {
   assert.deepEqual(runCartTransform(input([v1Line("l1")], shopPolicy("pilot", { allowLegacyV1: false })), SECRET).operations, []);
 });

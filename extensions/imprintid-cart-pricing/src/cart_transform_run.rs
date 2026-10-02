@@ -106,7 +106,11 @@ fn cents_per_bundle(total_cents: u64, bundle_quantity: u64) -> Decimal {
 fn cart_transform_run(input: schema::cart_transform_run::CartTransformRunInput) -> Result<schema::CartTransformRunResult> {
     let Some(policy_field) = input.shop().enforcement_policy() else { return Ok(schema::CartTransformRunResult { operations: vec![] }); };
     let Some(policy) = parse_json_policy::<ShopPolicy>(policy_field.json_value()) else { return Ok(schema::CartTransformRunResult { operations: vec![] }); };
-    if policy.schema != 1 || !policy.enabled || !matches!(policy.mode.as_str(), "pilot" | "universal") || policy.allow_legacy_v1 {
+    // `allowLegacyV1` only authorizes the legacy v1 branch below. It must not
+    // disable valid v2 signed quotes; otherwise a pilot store carrying the
+    // legacy compatibility flag silently leaves the original zero-priced line
+    // untouched even though the server issued an enforceable v2 quote.
+    if policy.schema != 1 || !policy.enabled || !matches!(policy.mode.as_str(), "pilot" | "universal") {
         return Ok(schema::CartTransformRunResult { operations: vec![] });
     }
     if input.presentment_currency_rate().0 != 1.0 || CART_SIGNING_SECRET.is_empty() {
