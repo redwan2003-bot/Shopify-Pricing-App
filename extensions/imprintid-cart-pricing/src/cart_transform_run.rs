@@ -2,7 +2,7 @@ use crate::{config::CART_SIGNING_SECRET, schema};
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use shopify_function::prelude::*;
 use shopify_function::scalars::{Decimal, JsonValue};
 use shopify_function::Result;
@@ -15,8 +15,6 @@ pub struct ShopPolicy {
     schema: u8,
     mode: String,
     enabled: bool,
-    #[serde(default)]
-    allow_legacy_v1: bool,
     adjustment_variant_gid: String,
     install_binding: String,
     policy_revision: u64,
@@ -42,10 +40,6 @@ struct Quote {
     config_digest: String,
     quote_id: String,
     issued_at_server: u64,
-}
-
-fn sha256_hex(value: &str) -> String {
-    format!("sha256:{:x}", Sha256::digest(value.as_bytes()))
 }
 
 fn json_value_to_serde(value: &JsonValue) -> Value {

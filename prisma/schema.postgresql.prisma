@@ -58,6 +58,7 @@ model Store {
   bulkAssignmentAudits    BulkAssignmentAudit[]
   webhookEvents           WebhookEvent[]
   inquiries               Inquiry[]
+  orderWorkflows          OrderWorkflow[]
 }
 
 // A named pricing strategy (e.g. "Standard", "Wholesale") a store can apply to products.
@@ -699,4 +700,106 @@ model Inquiry {
   updatedAt        DateTime @updatedAt
 
   @@index([storeId, status, createdAt])
+}
+
+// Durable order handoff for the ImprintID confirmation workflow. The signed quote and
+// normalized configuration are copied from Shopify's private line properties at order
+// creation so artwork/PO/proof phases can operate on an immutable pricing snapshot.
+model OrderWorkflow {
+  id              String   @id @default(cuid())
+  storeId         String
+  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shopifyOrderId  String
+  orderNumber     String?
+  status          String   @default("received") // received | artwork_pending | proof_ready | revision_requested | approved | production | shipped | completed
+  currency        String?
+  poNumber        String?
+  eventDate       DateTime?
+  inHandsDate     DateTime?
+  shipToAddress   String?
+  imprintInstructions String?
+  associationNumbers  String?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  configurations  OrderConfiguration[]
+  artwork         OrderArtwork[]
+  proofs          OrderProof[]
+  events          OrderWorkflowEvent[]
+
+  @@unique([storeId, shopifyOrderId])
+  @@index([storeId, status, createdAt])
+}
+
+model OrderConfiguration {
+  id                    String        @id @default(cuid())
+  workflowId            String
+  workflow              OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  shopifyLineItemId     String
+  shopifyProductId      String?
+  shopifyVariantId      String?
+  sku                   String?
+  quantity              Int
+  configuration         String?
+  pricingPayload        String?
+  pricingSignature      String?
+  pricingVersion        Int?
+  configDigest          String?
+  quoteEnvelopePresent  Boolean       @default(false)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  @@unique([workflowId, shopifyLineItemId])
+  @@index([shopifyProductId])
+}
+
+model OrderArtwork {
+  id          String        @id @default(cuid())
+  workflowId  String
+  workflow    OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  objectKey   String
+  filename    String
+  contentType String
+  byteSize    Int
+  checksum    String?
+  status      String        @default("submitted") // submitted | accepted | rejected
+  submittedAt DateTime      @default(now())
+  reviewedAt  DateTime?
+  reviewNote  String?
+
+  @@index([workflowId, status])
+}
+
+model OrderProof {
+  id              String        @id @default(cuid())
+  workflowId      String
+  workflow        OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  version         Int
+  objectKey       String
+  status          String        @default("ready") // ready | revision_requested | approved | superseded
+  requestedChanges String?
+  tokenHash       String?
+  tokenExpiresAt  DateTime?
+  approvedAt      DateTime?
+  approvedBy      String?
+  createdAt       DateTime      @default(now())
+
+  @@unique([workflowId, version])
+  @@index([workflowId, status])
+}
+
+model OrderWorkflowEvent {
+  id          String        @id @default(cuid())
+  workflowId  String
+  workflow    OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  fromStatus  String?
+  toStatus    String
+  actorType   String
+  actorId     String?
+  note        String?
+  metadata    String?
+  createdAt   DateTime      @default(now())
+
+  @@index([workflowId, createdAt])
 }

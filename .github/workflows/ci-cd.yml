@@ -120,6 +120,9 @@ jobs:
       - name: Install Shopify CLI
         run: npm install -g @shopify/cli
 
+      - name: Validate Shopify production configuration
+        run: shopify app config validate --config=production --json
+
       - name: Deploy Extensions & Configuration
         run: shopify app deploy --config shopify.app.production.toml --allow-updates --message "CI/CD automated deployment [${{ github.sha }}]"
         env:
