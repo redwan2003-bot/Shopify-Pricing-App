@@ -702,14 +702,16 @@ model Inquiry {
   @@index([storeId, status, createdAt])
 }
 
-// Durable order handoff for the ImprintID confirmation workflow.
+// Durable order handoff for the ImprintID confirmation workflow. The signed quote and
+// normalized configuration are copied from Shopify's private line properties at order
+// creation so artwork/PO/proof phases can operate on an immutable pricing snapshot.
 model OrderWorkflow {
   id              String   @id @default(cuid())
   storeId         String
   store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   shopifyOrderId  String
   orderNumber     String?
-  status          String   @default("received")
+  status          String   @default("received") // received | artwork_pending | proof_ready | revision_requested | approved | production | shipped | completed
   currency        String?
   poNumber        String?
   eventDate       DateTime?
@@ -720,6 +722,7 @@ model OrderWorkflow {
   notes           String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
   configurations  OrderConfiguration[]
   artwork         OrderArtwork[]
   proofs          OrderProof[]
@@ -760,26 +763,28 @@ model OrderArtwork {
   contentType String
   byteSize    Int
   checksum    String?
-  status      String        @default("submitted")
+  status      String        @default("submitted") // submitted | accepted | rejected
   submittedAt DateTime      @default(now())
   reviewedAt  DateTime?
   reviewNote  String?
+
   @@index([workflowId, status])
 }
 
 model OrderProof {
-  id               String        @id @default(cuid())
-  workflowId       String
-  workflow         OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  version          Int
-  objectKey        String
-  status           String        @default("ready")
+  id              String        @id @default(cuid())
+  workflowId      String
+  workflow        OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  version         Int
+  objectKey       String
+  status          String        @default("ready") // ready | revision_requested | approved | superseded
   requestedChanges String?
-  tokenHash        String?
-  tokenExpiresAt   DateTime?
-  approvedAt       DateTime?
-  approvedBy       String?
-  createdAt        DateTime      @default(now())
+  tokenHash       String?
+  tokenExpiresAt  DateTime?
+  approvedAt      DateTime?
+  approvedBy      String?
+  createdAt       DateTime      @default(now())
+
   @@unique([workflowId, version])
   @@index([workflowId, status])
 }
@@ -795,5 +800,6 @@ model OrderWorkflowEvent {
   note        String?
   metadata    String?
   createdAt   DateTime      @default(now())
+
   @@index([workflowId, createdAt])
 }
