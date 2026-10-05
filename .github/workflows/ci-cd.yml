@@ -85,7 +85,6 @@ jobs:
     needs: validate-and-test
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    environment: SHOPIFY_CLI_PARTNERS_TOKEN
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -124,12 +123,12 @@ jobs:
       - name: Validate Shopify production configuration
         run: shopify app config validate --config=production --json
         env:
-          SHOPIFY_CLI_PARTNERS_TOKEN: ${{ secrets.SHOPIFY_CLI_PARTNERS_TOKEN }}
+          SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
 
       - name: Deploy Extensions & Configuration
         run: shopify app deploy --config shopify.app.production.toml --allow-updates --message "CI/CD automated deployment [${{ github.sha }}]"
         env:
-          SHOPIFY_CLI_PARTNERS_TOKEN: ${{ secrets.SHOPIFY_CLI_PARTNERS_TOKEN }}
+          SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
           SHOPIFY_FLAG_STORE: imprintid-pricing-dev.myshopify.com
 
   build-docker-image:
