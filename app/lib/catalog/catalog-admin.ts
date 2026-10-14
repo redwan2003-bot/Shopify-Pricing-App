@@ -35,6 +35,7 @@ import { parseSelectionDescriptor, selectionTargetsWholeCatalog, SelectionError,
 import { createAdminWritePort } from "./write-port.ts";
 import type { AdminGraphqlClientLike, ShopPolicyContext } from "./admin-client.ts";
 import type { StoreContext } from "./tenancy.ts";
+import { applyLinkReport, buildLinkReport } from "../pricing-import/link-products.ts";
 
 // ---------------------------------------------------------------------------
 // Loader
@@ -284,6 +285,33 @@ export async function handleCatalogAdminAction(ctx: CatalogActionContext, form: 
   }
 
   switch (intent) {
+    // -------------------------------------------------------- SKU auto-link
+    case "linkBySku": {
+      if (!ctx.shopPolicy.ok) return fail(intent, "SHOP_POLICY_UNREADABLE", "could not read the shop's currency and policy — try again");
+
+      // This path is deliberately separate from bulk assignment. It only applies a
+      // one-to-one profile/SKU match; profiles with no product or multiple candidates
+      // are reported and left unassigned.
+      const report = await buildLinkReport(prisma, ctx.admin, store.storeId);
+      const applied = await applyLinkReport(prisma, ctx.admin, store.storeId, report);
+      if (applied.errors.length) {
+        return fail(intent, "SKU_LINK_PARTIAL", `SKU matching completed with ${applied.errors.length} Shopify write error(s).`, applied.errors.slice(0, 10));
+      }
+      return {
+        ok: true,
+        intent,
+        message: `SKU matching complete: ${report.matched.length} unique profile match(es), ${applied.written} Shopify policy write(s), ${report.heldBack.length} profile(s) held back because they were unmatched or ambiguous.`,
+        more: false,
+        data: {
+          matched: report.matched.length,
+          written: applied.written,
+          heldBack: report.heldBack.length,
+          heldBackReasons: report.heldBack.slice(0, 25),
+          policyCounts: report.counts,
+        },
+      };
+    }
+
     // ---------------------------------------------------------------- sync
     case "sync.start": {
       const idempotencyKey = String(form.get("idempotencyKey") ?? `sync-${Date.now()}`).slice(0, 128);

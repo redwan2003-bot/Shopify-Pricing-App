@@ -91,6 +91,7 @@ export default function CatalogManagement() {
   // One fetcher per long-running workflow, so each can drive its own request loop
   // without blocking the page or the others.
   const sync = useStepFetcher();
+  const link = useStepFetcher();
   const assign = useStepFetcher();
   const rollback = useStepFetcher();
   const plan = useStepFetcher();
@@ -99,7 +100,7 @@ export default function CatalogManagement() {
   const activeProfiles = useMemo(() => data.profiles.filter((p) => p.isActive), [data.profiles]);
 
   // Refresh the durable job state whenever a step reports it finished a unit of work.
-  const anyRunning = sync.running || assign.running || rollback.running;
+  const anyRunning = sync.running || link.running || assign.running || rollback.running;
   useEffect(() => {
     if (!anyRunning && revalidator.state === "idle") revalidator.revalidate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -175,6 +176,21 @@ export default function CatalogManagement() {
         </p>
 
         <SyncPanel data={data} sync={sync} busy={busy} disabled={!!data.activeBulkJobId} />
+        <div className={styles.panel}>
+          <h3>Automatic SKU matching</h3>
+          <p>
+            Match each approved pricing profile to one product using its exact unique SKU convention.
+            Products with no match or more than one candidate remain safely unassigned.
+          </p>
+          <button
+            type="button"
+            disabled={busy || link.running || !!data.activeBulkJobId || !data.enforcementReadable}
+            onClick={() => link.start({ intent: "linkBySku" })}
+          >
+            {link.running ? "Matching profiles by SKU…" : "Match profiles by SKU"}
+          </button>
+          <StepMessage step={link} />
+        </div>
       </s-section>
 
       {/* --------------------------------------------------- product list */}
