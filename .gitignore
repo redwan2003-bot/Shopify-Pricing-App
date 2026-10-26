@@ -56,3 +56,8 @@ imprint-id-dynamic-pricing/
 scripts/check_*.mjs
 scripts/query_*.mjs
 scripts/test_*.mjs
+.neon
+
+.npm-cache/
+
+.npm-cache/

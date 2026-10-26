@@ -37,6 +37,13 @@ if (host === "localhost") {
 
 export default defineConfig({
   server: {
+    watch: {
+      ignored: [
+        "**/extensions/**/target/**",
+        "**/extensions/**/dist/**",
+      ],
+    },
+    
     allowedHosts: [host],
     cors: {
       preflightContinue: true,
@@ -48,6 +55,7 @@ export default defineConfig({
       allow: ["app", "node_modules"],
     },
   },
+  
   plugins: [
     reactRouter(),
     tsconfigPaths(),
