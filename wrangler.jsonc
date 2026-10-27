@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "shopify-pricing-app",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-10-26",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "assets": {
+    "directory": "./build/client"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}
