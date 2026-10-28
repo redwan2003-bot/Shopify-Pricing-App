@@ -63,3 +63,6 @@ scripts/test_*.mjs
 .npm-cache/
 
 .wrangler/
+
+# Prisma Worker client (built by `prisma generate`)
+/app/generated/prisma-worker/

@@ -2,7 +2,7 @@
   "name": "imprint-id-dynamic-pricing",
   "private": true,
   "scripts": {
-    "build": "react-router build",
+    "build": "prisma generate && react-router build",
     "predev": "npm run fn:config",
     "dev": "shopify app dev",
     "predeploy": "npm run fn:config",
@@ -19,7 +19,7 @@
     "prisma": "prisma",
     "db:seed": "prisma db seed",
     "fn:config": "node extensions/imprintid-cart-pricing/scripts/generate-config.mjs && node extensions/imprintid-cart-validation/scripts/generate-config.mjs",
-    "pretest": "npm run fn:config",
+    "pretest": "npm run fn:config && prisma generate",
     "test": "node --env-file=.env.test --test --test-concurrency=1 \"app/**/*.test.ts\" \"extensions/**/*.test.ts\" \"test/**/*.test.ts\"",
     "prisma:generate:pg": "prisma generate --schema=prisma/schema.postgresql.prisma",
     "catalog:import": "node scripts/import-catalog-pricing.ts",
@@ -29,7 +29,7 @@
     "provision": "node scripts/shopify/provision.mjs",
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
-    "pretypecheck": "npm run fn:config",
+    "pretypecheck": "npm run fn:config && prisma generate",
     "typecheck": "react-router typegen && tsc --noEmit"
   },
   "prisma": {

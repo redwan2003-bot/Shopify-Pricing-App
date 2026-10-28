@@ -1,5 +1,6 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { reactRouter } from "@react-router/dev/vite";
+import { fileURLToPath } from "node:url";
 import { defineConfig, type UserConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
@@ -62,6 +63,18 @@ export default defineConfig({
     reactRouter(),
     tsconfigPaths(),
   ],
+  resolve: {
+    alias: [
+      // Workers can't load the Node Prisma client; route every `@prisma/client` import
+      // (including Shopify's session-storage package) to the Worker-targeted build.
+      {
+        find: /^@prisma\/client$/,
+        replacement: fileURLToPath(
+          new URL("./app/generated/prisma-worker/client.ts", import.meta.url),
+        ),
+      },
+    ],
+  },
   build: {
     assetsInlineLimit: 0,
   },
