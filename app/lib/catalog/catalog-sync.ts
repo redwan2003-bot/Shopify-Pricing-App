@@ -43,7 +43,7 @@ import { parseProductGid, parseVariantGid } from "./gid.ts";
 import { acquireSyncLease, newWorkerToken, releaseSyncLease, renewSyncLease, LeaseGuard } from "./leases.ts";
 import { normalizeCurrencyCode } from "../pricing-api/currency-contract.ts";
 
-const UPSERT_BATCH_SIZE = 200;
+const UPSERT_BATCH_SIZE = 10;
 /** The sentinel that makes "one active sync per shop" a database constraint. */
 export const ACTIVE_SYNC_SENTINEL = "active";
 

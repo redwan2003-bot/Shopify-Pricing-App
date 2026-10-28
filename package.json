@@ -18,6 +18,7 @@
     "shopify": "shopify",
     "prisma": "prisma",
     "db:seed": "prisma db seed",
+    "db:seed:test": "node --env-file=.env.test prisma/seed.ts",
     "fn:config": "node extensions/imprintid-cart-pricing/scripts/generate-config.mjs && node extensions/imprintid-cart-validation/scripts/generate-config.mjs",
     "pretest": "npm run fn:config && prisma generate",
     "test": "node --env-file=.env.test --test --test-concurrency=1 \"app/**/*.test.ts\" \"extensions/**/*.test.ts\" \"test/**/*.test.ts\"",

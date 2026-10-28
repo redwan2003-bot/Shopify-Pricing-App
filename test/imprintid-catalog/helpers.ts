@@ -1,31 +1,18 @@
 /**
  * Task 6A — shared synthetic fixtures for the catalog-management test suite.
  *
- * Every test runs against the project's real `dev.sqlite` (the schema has no separate
- * test datasource) using disposable `*.myshopify.com` shop domains that are deleted in
- * `after`. NO real shop, product, token or signing secret is ever used.
+ * Every test runs against the isolated Neon test branch (`TEST_DATABASE_URL`) using
+ * disposable `*.myshopify.com` shop domains that are deleted in `after`. NO real shop,
+ * product, token or signing secret is ever used.
  */
 
-import { PrismaClient } from "@prisma/client";
-import { PrismaNeon } from "@prisma/adapter-neon";
+import { createTestPrisma } from "../support/prisma.ts";
 import { randomUUID } from "node:crypto";
 import type { CatalogWritePort, PolicyRead, PolicySetRequest, PolicyWriteOutcome } from "../../app/lib/catalog/write-port.ts";
 import { normalizeExistingPolicyJson } from "../../app/lib/catalog/policy-value.ts";
 import { overrideProductKey } from "../../app/lib/catalog/gid.ts";
 
-// `node --test` runs these files in parallel and the dev server holds the same
-// `dev.sqlite` (rollback-journal mode → writers block readers). A long socket timeout on
-// the test client's own connection keeps a query that is merely QUEUED behind a lock from
-// being reported as a failure. (`file:dev.sqlite` is resolved relative to schema.prisma.)
-const connectionString = process.env.TEST_DATABASE_URL;
-
-if (!connectionString) {
-  throw new Error("Missing TEST_DATABASE_URL. Tests must use the isolated Neon test branch.");
-}
-
-export const prisma = new PrismaClient({
-  adapter: new PrismaNeon({ connectionString }),
-});
+export const prisma = createTestPrisma();
 
 /**
  * A second line of defence: retry a genuinely transient lock error a few times with

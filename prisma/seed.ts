@@ -1,19 +1,30 @@
-import { PrismaClient } from "@prisma/client";
 import { importPricingProfile, PricingImportValidationError } from "../app/lib/pricing-import/import.ts";
 import { buildLny01PricingInput } from "./seed-data/lny01.ts";
+import { createTestPrisma } from "../test/support/prisma.ts";
 
 /**
- * Development-environment shop domain used when SEED_SHOP_DOMAIN is not set. This is a
- * default for local seeding only, not something baked into the schema/architecture —
- * every pricing record is still stored against a normal Store row keyed by whatever
+ * TEST-ONLY SEED. Seeds the LNY01 fixture into the isolated Neon `test` branch that the
+ * automated suite expects (`TEST_DATABASE_URL`, loaded from `.env.test`). It deliberately
+ * never reads `DATABASE_URL`, so it cannot seed production:
+ *
+ *   pnpm db:seed:test
+ *
+ * Shop domain used when SEED_SHOP_DOMAIN is not set — the fixture shop the tests query.
+ * Every pricing record is still stored against a normal Store row keyed by whatever
  * shopDomain is passed in.
  */
-const DEFAULT_DEV_SHOP_DOMAIN = "imprintid-pricing-dev.myshopify.com";
+const DEFAULT_DEV_SHOP_DOMAIN = "imprintid-pricing-development.myshopify.com";
 const DEFAULT_LNY01_PRODUCT_ID = "8438071820427";
 
 async function main() {
+  if (!process.env.TEST_DATABASE_URL) {
+    throw new Error(
+      "Refusing to seed: TEST_DATABASE_URL is not set. This seed only targets the isolated " +
+        "Neon test branch and never falls back to DATABASE_URL. Run: pnpm db:seed:test",
+    );
+  }
   const shopDomain = process.env.SEED_SHOP_DOMAIN?.trim() || DEFAULT_DEV_SHOP_DOMAIN;
-  const prisma = new PrismaClient();
+  const prisma = createTestPrisma();
 
   try {
     console.log(`Seeding pricing data for shop: ${shopDomain}`);
