@@ -95,6 +95,27 @@ test("apply writes BARE-keyed overrides and never a GID-keyed one", async () => 
   assert.ok((await overrideKeys(storeId)).every((k) => !k.startsWith("gid://")));
 });
 
+test("applying the link refreshes coverage for exactly the linked products, and the preview does not", async () => {
+  const { storeId } = await fixture(["AAA", "BBB"]);
+  const shop = new FakeShopify([
+    { id: 6001, title: "AAA", status: "ACTIVE", skus: ["AAA_x"] },
+    { id: 6002, title: "BBB", status: "ACTIVE", skus: ["BBB_x"] },
+    { id: 6003, title: "not linked", status: "ACTIVE", skus: ["ZZZ_x"] },
+  ]);
+  for (const id of [6001, 6002, 6003]) {
+    await prisma.catalogProduct.create({ data: { storeId, shopifyProductId: gid(id), title: `p${id}`, handle: `p${id}`, status: "ACTIVE" } });
+  }
+  const coverage = async (id: number) => (await prisma.catalogProduct.findFirstOrThrow({ where: { storeId, shopifyProductId: gid(id) } })).coverageStatus;
+
+  const report = await buildLinkReport(prisma, shop, storeId);
+  assert.deepEqual([await coverage(6001), await coverage(6002), await coverage(6003)], ["unassigned", "unassigned", "unassigned"], "the preview changed nothing");
+
+  const applied = await applyLinkReport(prisma, shop, storeId, report);
+  assert.equal(applied.coverage.ok, true);
+  assert.equal(applied.coverage.updated, 2);
+  assert.deepEqual([await coverage(6001), await coverage(6002), await coverage(6003)], ["assigned", "assigned", "unassigned"]);
+});
+
 test("the preview is read-only: no Shopify mutation and no local override write", async () => {
   const { storeId } = await fixture(["AAA", "BBB"]);
   const shop = new FakeShopify([

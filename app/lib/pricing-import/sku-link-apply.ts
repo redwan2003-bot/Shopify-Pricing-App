@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { adminRequest, METAFIELDS_SET_MAX, type AdminGraphqlClientLike } from "../catalog/admin-client.ts";
 import { createAdminWritePort, type PolicyRead, type PolicyWriteOutcome } from "../catalog/write-port.ts";
 import { overrideProductKey } from "../catalog/gid.ts";
+import { reconcileCoverageForProducts } from "../catalog/coverage.ts";
 import { buildLinkReport, classifyPolicy, expectedPolicyJson, type OverrideAction, type PolicyStatus } from "./link-products.ts";
 
 /**
@@ -96,6 +97,8 @@ export interface Manifest {
   resolutions: Record<string, string>;
   state: "planned" | "applying" | "completed" | "aborted" | "rolled_back";
   abortedBecause?: string[];
+  /** coverage columns refreshed for the products whose override changed (best-effort) */
+  coverage?: { updated: number; failures: string[] };
   entries: ManifestEntry[];
 }
 
@@ -419,6 +422,14 @@ export async function applySkuLinkPlan(
         failures.push(`${e.sku} (${e.productId}): ${e.error}`);
       }
     }
+    // Refresh the derived coverage columns for the overrides this batch created or changed.
+    const touched = batch.filter((e) => e.overrideCreated || e.overrideUpdated).map((e) => e.productGid);
+    if (touched.length) {
+      const cov = await reconcileCoverageForProducts(deps.prisma, deps.storeId, touched);
+      manifest.coverage ??= { updated: 0, failures: [] };
+      manifest.coverage.updated += cov.updated;
+      if (!cov.ok && cov.error) manifest.coverage.failures.push(cov.error);
+    }
     await deps.onManifest(manifest);
     if (failures.length) return abort(failures);
   }
@@ -437,6 +448,7 @@ export interface RollbackResult {
   restored: number;
   removedMetafields: number;
   overridesRemoved: number;
+  coverageUpdated: number;
   skipped: string[];
 }
 
@@ -447,7 +459,7 @@ export async function rollbackSkuLink(deps: Deps & { manifest: Manifest; onManif
   if (identity.length) throw new Error(identity.join("; "));
 
   const port = createAdminWritePort(deps.admin);
-  const result: RollbackResult = { restored: 0, removedMetafields: 0, overridesRemoved: 0, skipped: [] };
+  const result: RollbackResult = { restored: 0, removedMetafields: 0, overridesRemoved: 0, coverageUpdated: 0, skipped: [] };
 
   for (const e of [...manifest.entries].reverse()) {
     const label = `${e.sku} (${e.productId})`;
@@ -484,6 +496,9 @@ export async function rollbackSkuLink(deps: Deps & { manifest: Manifest; onManif
       }
     }
   }
+  // The overrides this run created are gone, so their products are no longer covered.
+  const removedGids = manifest.entries.filter((e) => e.overrideCreated).map((e) => e.productGid);
+  if (removedGids.length) result.coverageUpdated = (await reconcileCoverageForProducts(deps.prisma, deps.storeId, removedGids)).updated;
   manifest.state = "rolled_back";
   await deps.onManifest(manifest);
   return result;

@@ -3,6 +3,7 @@ import type { AdminGraphqlClientLike } from "../pricing-api/product-resolver.ts"
 import { buildProductPolicyValue, canonicalPolicyJson, normalizeExistingPolicyJson } from "../catalog/policy-value.ts";
 import { overrideProductKey, parseProductGid } from "../catalog/gid.ts";
 import { classifyOverrideKeyState } from "../catalog/override-key-audit.ts";
+import { reconcileCoverageForProducts, type BestEffortReconcile } from "../catalog/coverage.ts";
 
 /**
  * Links each pricing profile to its Shopify product by SKU: a profile with sku "LDSPK" matches
@@ -312,7 +313,7 @@ export async function applyLinkReport(
   admin: AdminGraphqlClientLike,
   storeId: string,
   report: LinkReport,
-): Promise<{ written: number; errors: string[]; overridesCreated: number; overridesUpdated: number }> {
+): Promise<{ written: number; errors: string[]; overridesCreated: number; overridesUpdated: number; coverage: BestEffortReconcile }> {
   let written = 0;
   const errors: string[] = [];
   for (let i = 0; i < report.toWrite.length; i += METAFIELD_BATCH) {
@@ -345,7 +346,15 @@ export async function applyLinkReport(
     if (entry.action === "create") overridesCreated += 1;
     else overridesUpdated += 1;
   }
-  return { written, errors, overridesCreated, overridesUpdated };
+
+  // Keep the Catalog page's coverage columns in step with the overrides just written. Scoped to
+  // exactly these products and best-effort: it never fails the link.
+  const coverage = await reconcileCoverageForProducts(
+    prisma,
+    storeId,
+    report.overridePlan.filter((e) => e.action === "create" || e.action === "update").map((e) => e.productGid),
+  );
+  return { written, errors, overridesCreated, overridesUpdated, coverage };
 }
 
 // ---------------------------------------------------------------------------------------

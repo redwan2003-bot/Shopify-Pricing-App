@@ -38,6 +38,7 @@ import {
   type AdminGraphqlClientLike,
 } from "./admin-client.ts";
 import { RECONCILE_BATCH_SIZE, SYNC_OBJECTS_PER_REQUEST } from "./constants.ts";
+import { reconcileCoverageAfterSync } from "./coverage.ts";
 import { parseJsonl, type JsonlRecord } from "./jsonl.ts";
 import { parseProductGid, parseVariantGid } from "./gid.ts";
 import { acquireSyncLease, newWorkerToken, releaseSyncLease, renewSyncLease, LeaseGuard } from "./leases.ts";
@@ -418,6 +419,10 @@ async function ingestBoundedStep(
   const done = wasPartial
     ? await finishSync(prisma, job.id, "partial", now(), { productsRemoved: removedProducts, variantsRemoved: removedVariants })
     : await completeSync(prisma, job.id, now(), { productsRemoved: removedProducts, variantsRemoved: removedVariants });
+  // A sync can insert products that already have an override and drop products an override
+  // covered, so refresh the derived coverage columns. Scoped to products that have an override
+  // or are marked covered, and best-effort: it can never fail a sync that already finished.
+  await reconcileCoverageAfterSync(prisma, storeId);
   return { ok: true, state: toState(done) };
 }
 

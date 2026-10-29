@@ -10,7 +10,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { advanceCatalogSync, startCatalogSync, ACTIVE_SYNC_SENTINEL, computeBulkPollBackoffMs, describeIngestError } from "../../app/lib/catalog/catalog-sync.ts";
-import { prisma, makeShopDomain, seedStore, cleanupShops, buildCatalogJsonl } from "./helpers.ts";
+import { prisma, makeShopDomain, seedStore, cleanupShops, buildCatalogJsonl, seedProfile, seedOverride } from "./helpers.ts";
 import { FakeAdmin, fakeResultFetcher } from "./fake-admin.ts";
 
 const shops: string[] = [];
@@ -392,6 +392,27 @@ test("a partial bulk result completes the job as 'partial', never 'completed'", 
   assert.equal(res.state.productsUpserted, 1);
 });
 
+test("a finished sync refreshes coverage for products that already have an override", async () => {
+  const { storeId } = await newStore();
+  const profile = await seedProfile(storeId, { name: "Already linked" });
+  // The override exists BEFORE the product is first synced, as with the SKU link.
+  await seedOverride(storeId, "gid://shopify/Product/7701", profile.id);
+  await runSyncToCompletion(
+    storeId,
+    buildCatalogJsonl([
+      { id: "gid://shopify/Product/7701", title: "Linked", variants: [{ id: "gid://shopify/ProductVariant/77011", sku: "L" }] },
+      { id: "gid://shopify/Product/7702", title: "Plain", variants: [{ id: "gid://shopify/ProductVariant/77021", sku: "P" }] },
+    ]),
+  );
+  const linked = await prisma.catalogProduct.findFirstOrThrow({ where: { storeId, shopifyProductId: "gid://shopify/Product/7701" } });
+  const plain = await prisma.catalogProduct.findFirstOrThrow({ where: { storeId, shopifyProductId: "gid://shopify/Product/7702" } });
+  assert.equal(linked.coverageStatus, "assigned");
+  assert.equal(linked.assignedProfileId, profile.id);
+  assert.equal(linked.enforcementReady, false, "no policySyncedAt, so still not enforcement-ready");
+  assert.equal(linked.policySyncedAt, null);
+  assert.equal(plain.coverageStatus, "unassigned");
+});
+
 test("a sync only ever writes rows for its own store", async () => {
   const a = await newStore();
   const b = await newStore();
@@ -420,9 +441,15 @@ test("upsert semantics: unchanged variants are only re-marked, changed ones are 
   const product0 = await prisma.catalogProduct.findFirstOrThrow({ where: { storeId, shopifyProductId: P } });
   assert.equal(product0.lastSeenSyncId, first.jobId);
 
-  // State the sync does NOT own, plus a "removed" marker and a stale variant timestamp.
+  // State the sync does NOT own (the policy digest), a coverage state that a real override
+  // justifies, plus a "removed" marker and a stale variant timestamp.
   const marker = new Date("2026-02-02T00:00:00Z");
-  await prisma.catalogProduct.update({ where: { id: product0.id }, data: { policyDigest: "digest-keep", coverageStatus: "assigned", removedFromShopifyAt: marker } });
+  const covering = await seedProfile(storeId, { name: "Covers P" });
+  await seedOverride(storeId, P, covering.id);
+  await prisma.catalogProduct.update({
+    where: { id: product0.id },
+    data: { policyDigest: "digest-keep", coverageStatus: "assigned", assignedProfileId: covering.id, removedFromShopifyAt: marker },
+  });
   await prisma.catalogVariant.updateMany({ where: { storeId }, data: { shopifyUpdatedAt: marker } });
 
   const second = await runSyncToCompletion(
@@ -438,8 +465,9 @@ test("upsert semantics: unchanged variants are only re-marked, changed ones are 
   assert.equal(product1.lastSeenSyncId, second.jobId);
   assert.equal(product1.removedFromShopifyAt, null, "a product seen again is revived");
   assert.equal(product1.firstSeenAt.getTime(), product0.firstSeenAt.getTime(), "firstSeenAt is never rewritten");
-  assert.equal(product1.policyDigest, "digest-keep", "pricing-coverage columns are not touched by a sync");
-  assert.equal(product1.coverageStatus, "assigned");
+  assert.equal(product1.policyDigest, "digest-keep", "the policy digest is not touched by a sync");
+  assert.equal(product1.coverageStatus, "assigned", "coverage follows the override, which still exists");
+  assert.equal(product1.assignedProfileId, covering.id);
 
   const v1 = await prisma.catalogVariant.findFirstOrThrow({ where: { storeId, shopifyVariantId: V1 } });
   const v2 = await prisma.catalogVariant.findFirstOrThrow({ where: { storeId, shopifyVariantId: V2 } });

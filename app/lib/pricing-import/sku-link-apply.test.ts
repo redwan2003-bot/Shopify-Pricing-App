@@ -218,6 +218,30 @@ test("apply: writes the manifest BEFORE the first mutation, then policies and ba
   assert.ok(run.manifests.length >= 3, "the manifest was updated after each batch");
 });
 
+test("apply refreshes coverage for the overrides it creates, and rollback undoes it", async () => {
+  const f = await fixture(3);
+  for (let i = 0; i < 3; i++) {
+    await prisma.catalogProduct.create({ data: { storeId: f.storeId, shopifyProductId: gid(9_000_001 + i), title: `p${i}`, handle: `p${i}`, status: "ACTIVE" } });
+  }
+  const states = async () => (await prisma.catalogProduct.findMany({ where: { storeId: f.storeId }, select: { coverageStatus: true, assignedProfileId: true, enforcementReady: true, policySyncedAt: true } }));
+
+  const plan = await planOf(f);
+  const run = runApply(f, plan.hash);
+  const result = await run.promise;
+  assert.equal(result.state, "completed");
+  assert.equal(result.manifest?.coverage?.updated, 3);
+  assert.deepEqual(result.manifest?.coverage?.failures, []);
+  const applied = await states();
+  assert.ok(applied.every((s) => s.coverageStatus === "assigned" && s.assignedProfileId !== null));
+  assert.ok(applied.every((s) => s.enforcementReady === false && s.policySyncedAt === null), "enforcementReady / policySyncedAt are not advanced by the link");
+
+  const manifest = run.manifests[run.manifests.length - 1];
+  const rolled = await rollbackSkuLink({ prisma, admin: f.shopify, shop: f.shop, storeId: f.storeId, manifest, onManifest: async () => {} });
+  assert.equal(rolled.overridesRemoved, 3);
+  assert.equal(rolled.coverageUpdated, 3);
+  assert.ok((await states()).every((s) => s.coverageStatus === "unassigned" && s.assignedProfileId === null), "coverage returns to unassigned");
+});
+
 test("apply refuses, and writes nothing, if the approved plan no longer matches the live state", async () => {
   const f = await fixture(3);
   const plan = await planOf(f);
