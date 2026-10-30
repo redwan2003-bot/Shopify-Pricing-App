@@ -26,7 +26,7 @@ export const listLoader = async ({ request }: LoaderFunctionArgs) => {
   const q = (new URL(request.url).searchParams.get("q") ?? "").trim().slice(0, 100);
   const where: Prisma.PricingProfileWhereInput = {
     storeId: store.id,
-    ...(q ? { OR: [{ sku: { contains: q } }, { name: { contains: q } }] } : {}),
+    ...(q ? { OR: [{ sku: { contains: q } }, { name: { contains: q, mode: "insensitive" } }] } : {}),
   };
   const [total, profiles] = await Promise.all([
     prisma.pricingProfile.count({ where }),

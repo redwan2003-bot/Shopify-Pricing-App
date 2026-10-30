@@ -21,7 +21,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          pnpm --version
 
       - name: Setup Rust for Shopify Functions
         uses: dtolnay/rust-toolchain@stable
@@ -29,10 +33,10 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install Dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Generate Function Secret Configs
-        run: npm run fn:config
+        run: pnpm run fn:config
         env:
           IMPRINTID_CART_SIGNING_SECRET: ${{ secrets.IMPRINTID_CART_SIGNING_SECRET || 'dev_signing_secret_for_ci_test_run' }}
 

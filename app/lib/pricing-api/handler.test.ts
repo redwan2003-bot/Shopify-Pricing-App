@@ -1,6 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import { createTestPrisma } from "../../../test/support/prisma.ts";
 import { handlePricingApiRequest } from "./handler.ts";
 import { importPricingProfile } from "../pricing-import/import.ts";
 import type { PricingProfileImportInput } from "../pricing-import/types.ts";
@@ -26,7 +26,7 @@ import type { PricingProfileImportInput } from "../pricing-import/types.ts";
 const SHOP_DOMAIN = "imprintid-pricing-development.myshopify.com";
 const SKU = "LNY01";
 
-const prisma = new PrismaClient();
+const prisma = createTestPrisma();
 
 const SUFFIX = `${process.pid}-${Date.now()}`;
 const REQUIRED_GROUP_DOMAIN = `pricing-api-test-required-${SUFFIX}.invalid`;

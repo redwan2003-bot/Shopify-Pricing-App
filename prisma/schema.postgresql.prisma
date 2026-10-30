@@ -2,7 +2,16 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
+  engineType = "client"
+}
+
+// Cloudflare Worker-only client (WASM query compiler). Node tests/scripts keep using `client`.
+generator worker_client {
+  provider   = "prisma-client"
+  output     = "../app/generated/prisma-worker"
+  engineType = "client"
+  runtime    = "workerd"
 }
 
 // Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
