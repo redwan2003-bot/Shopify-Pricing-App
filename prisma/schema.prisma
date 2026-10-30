@@ -69,6 +69,8 @@ model Store {
   webhookEvents           WebhookEvent[]
   inquiries               Inquiry[]
   orderWorkflows          OrderWorkflow[]
+  productStagingRuns      ProductStagingRun[]
+  productStagingRecords   ProductStagingRecord[]
 }
 
 // A named pricing strategy (e.g. "Standard", "Wholesale") a store can apply to products.
@@ -252,13 +254,13 @@ model OptionGroup {
 // supplied catalog itself reuses codes across distinct labeled items. `priceCode`
 // (Phase 2.7) is separate, optional vendor price-sheet metadata — display-only.
 model OptionValue {
-  id                   String      @id @default(cuid())
-  optionGroupId        String
-  optionGroup          OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
-  code                 String?
-  label                String
-  priceCode            String?
-  priceAdjustmentCents Int?
+  id                      String      @id @default(cuid())
+  optionGroupId           String
+  optionGroup             OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+  code                    String?
+  label                   String
+  priceCode               String?
+  priceAdjustmentCents    Int?
   // Net (actually-charged) price adjustment, when the source data supplies one
   // separately from `priceAdjustmentCents` (list). Additive, nullable, same
   // null-means-"not supplied" convention as the rest of this schema: null does NOT
@@ -266,10 +268,10 @@ model OptionValue {
   // calculator falls back to `priceAdjustmentCents` for both totals — exactly how
   // every option priced before this column existed continues to behave unchanged.
   netPriceAdjustmentCents Int?
-  isDefault            Boolean     @default(false)
-  sortOrder            Int         @default(0)
-  createdAt            DateTime    @default(now())
-  updatedAt            DateTime    @updatedAt
+  isDefault               Boolean     @default(false)
+  sortOrder               Int         @default(0)
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
 
   @@unique([optionGroupId, label])
   @@index([optionGroupId])
@@ -425,8 +427,9 @@ model CatalogProduct {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  variants        CatalogVariant[]
-  assignmentItems BulkAssignmentItem[]
+  variants              CatalogVariant[]
+  assignmentItems       BulkAssignmentItem[]
+  productStagingRecords ProductStagingRecord[]
 
   @@unique([storeId, shopifyProductId])
   @@index([storeId])
@@ -454,9 +457,9 @@ model CatalogVariant {
 
   shopifyVariantId String // canonical GID gid://shopify/ProductVariant/<id>
   shopifyProductId String // denormalized parent GID — lets a SKU search stay one query
-  title            String @default("")
+  title            String    @default("")
   sku              String? // null = Shopify has no SKU for this variant
-  position         Int     @default(0)
+  position         Int       @default(0)
   shopifyUpdatedAt DateTime?
 
   lastSeenSyncId       String?
@@ -464,6 +467,8 @@ model CatalogVariant {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  productStagingVariants ProductStagingVariant[]
 
   @@unique([storeId, shopifyVariantId])
   @@index([storeId])
@@ -485,12 +490,12 @@ model CatalogSyncJob {
   // Task 6A.1: the EXACT BulkOperation this job owns. Polling uses
   // `bulkOperation(id: $id)` and asserts the returned id equals this value — never
   // `currentBulkOperation`, which can belong to an unrelated (or another app's) run.
-  bulkOperationId       String?
-  bulkOperationStatus   String?
-  bulkOperationObjects  Int     @default(0)
-  resultUrl             String?
-  resumeByteOffset      Int     @default(0)
-  resumeLastObjectId    String?
+  bulkOperationId      String?
+  bulkOperationStatus  String?
+  bulkOperationObjects Int     @default(0)
+  resultUrl            String?
+  resumeByteOffset     Int     @default(0)
+  resumeLastObjectId   String?
 
   objectsSeen      Int @default(0)
   productsUpserted Int @default(0)
@@ -608,13 +613,13 @@ model BulkAssignmentItem {
   // pending | claimed | overrideWritten | succeeded | unchanged | skipped | failed | rolled_back
   status String @default("pending")
 
-  attemptCount  Int       @default(0)
-  claimedBy     String?
-  claimedAt     DateTime?
+  attemptCount   Int       @default(0)
+  claimedBy      String?
+  claimedAt      DateTime?
   // Per-item lease expiry — an item claimed by a worker that died becomes claimable
   // again only after this passes (Task 6A.1).
   leaseExpiresAt DateTime?
-  nextAttemptAt DateTime?
+  nextAttemptAt  DateTime?
 
   // Previous state (rollback snapshot).
   prevOverrideExisted   Boolean  @default(false)
@@ -716,49 +721,49 @@ model Inquiry {
 // normalized configuration are copied from Shopify's private line properties at order
 // creation so artwork/PO/proof phases can operate on an immutable pricing snapshot.
 model OrderWorkflow {
-  id              String   @id @default(cuid())
-  storeId         String
-  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  shopifyOrderId  String
-  orderNumber     String?
-  status          String   @default("received") // received | artwork_pending | proof_ready | revision_requested | approved | production | shipped | completed
-  currency        String?
-  poNumber        String?
-  eventDate       DateTime?
-  inHandsDate     DateTime?
-  shipToAddress   String?
+  id                  String    @id @default(cuid())
+  storeId             String
+  store               Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shopifyOrderId      String
+  orderNumber         String?
+  status              String    @default("received") // received | artwork_pending | proof_ready | revision_requested | approved | production | shipped | completed
+  currency            String?
+  poNumber            String?
+  eventDate           DateTime?
+  inHandsDate         DateTime?
+  shipToAddress       String?
   imprintInstructions String?
   associationNumbers  String?
-  notes           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  configurations  OrderConfiguration[]
-  artwork         OrderArtwork[]
-  proofs          OrderProof[]
-  events          OrderWorkflowEvent[]
+  configurations OrderConfiguration[]
+  artwork        OrderArtwork[]
+  proofs         OrderProof[]
+  events         OrderWorkflowEvent[]
 
   @@unique([storeId, shopifyOrderId])
   @@index([storeId, status, createdAt])
 }
 
 model OrderConfiguration {
-  id                    String        @id @default(cuid())
-  workflowId            String
-  workflow              OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  shopifyLineItemId     String
-  shopifyProductId      String?
-  shopifyVariantId      String?
-  sku                   String?
-  quantity              Int
-  configuration         String?
-  pricingPayload        String?
-  pricingSignature      String?
-  pricingVersion        Int?
-  configDigest          String?
-  quoteEnvelopePresent  Boolean       @default(false)
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  id                   String        @id @default(cuid())
+  workflowId           String
+  workflow             OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  shopifyLineItemId    String
+  shopifyProductId     String?
+  shopifyVariantId     String?
+  sku                  String?
+  quantity             Int
+  configuration        String?
+  pricingPayload       String?
+  pricingSignature     String?
+  pricingVersion       Int?
+  configDigest         String?
+  quoteEnvelopePresent Boolean       @default(false)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   @@unique([workflowId, shopifyLineItemId])
   @@index([shopifyProductId])
@@ -782,34 +787,241 @@ model OrderArtwork {
 }
 
 model OrderProof {
-  id              String        @id @default(cuid())
-  workflowId      String
-  workflow        OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  version         Int
-  objectKey       String
-  status          String        @default("ready") // ready | revision_requested | approved | superseded
+  id               String        @id @default(cuid())
+  workflowId       String
+  workflow         OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  version          Int
+  objectKey        String
+  status           String        @default("ready") // ready | revision_requested | approved | superseded
   requestedChanges String?
-  tokenHash       String?
-  tokenExpiresAt  DateTime?
-  approvedAt      DateTime?
-  approvedBy      String?
-  createdAt       DateTime      @default(now())
+  tokenHash        String?
+  tokenExpiresAt   DateTime?
+  approvedAt       DateTime?
+  approvedBy       String?
+  createdAt        DateTime      @default(now())
 
   @@unique([workflowId, version])
   @@index([workflowId, status])
 }
 
 model OrderWorkflowEvent {
-  id          String        @id @default(cuid())
-  workflowId  String
-  workflow    OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  fromStatus  String?
-  toStatus    String
-  actorType   String
-  actorId     String?
-  note        String?
-  metadata    String?
-  createdAt   DateTime      @default(now())
+  id         String        @id @default(cuid())
+  workflowId String
+  workflow   OrderWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus   String
+  actorType  String
+  actorId    String?
+  note       String?
+  metadata   String?
+  createdAt  DateTime      @default(now())
 
   @@index([workflowId, createdAt])
+}
+
+enum ProductStagingRunStatus {
+  PLANNED
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum ProductStagingSource {
+  SHOPIFY
+  IMPRINTID_WEB
+  GOOGLE_DRIVE
+  GMAIL
+  MANUAL
+}
+
+enum ProductStagingMediaRole {
+  COVER
+  GALLERY
+  DETAIL
+  SPECIFICATION
+  UNCLASSIFIED
+}
+
+enum ProductStagingVerificationStatus {
+  UNVERIFIED
+  VERIFIED
+  CONFLICTED
+  MISSING
+}
+
+model ProductStagingRun {
+  id                   String                  @id @default(cuid())
+  storeId              String
+  store                Store                   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  status               ProductStagingRunStatus @default(PLANNED)
+  sourceSummary        Json?
+  sourceFingerprint    String?
+  normalizationVersion String?
+  recordsRead          Int                     @default(0)
+  recordsCreated       Int                     @default(0)
+  recordsConflicted    Int                     @default(0)
+  errorCode            String?
+  errorMessage         String?
+  startedAt            DateTime?
+  finishedAt           DateTime?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  records ProductStagingRecord[]
+
+  @@index([storeId, createdAt])
+  @@index([storeId, status])
+}
+
+model ProductStagingRecord {
+  id      String            @id @default(cuid())
+  storeId String
+  store   Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  runId   String
+  run     ProductStagingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  catalogProductId String?
+  catalogProduct   CatalogProduct? @relation(fields: [catalogProductId], references: [id], onDelete: SetNull)
+  sourceProductKey String
+  shopifyProductId String?
+  primarySku       String?
+  vendorCode       String?
+
+  title                String?
+  handle               String?
+  vendor               String?
+  productType          String?
+  status               String?
+  productUrl           String? @db.Text
+  description          String? @db.Text
+  summary              String? @db.Text
+  brand                String?
+  material             String?
+  dimensions           String?
+  colors               String? @db.Text
+  primaryCoverImageUrl String? @db.Text
+
+  verificationStatus ProductStagingVerificationStatus @default(UNVERIFIED)
+  rawPayload         Json?
+  createdAt          DateTime                         @default(now())
+  updatedAt          DateTime                         @updatedAt
+
+  variants   ProductStagingVariant[]
+  media      ProductStagingMedia[]
+  attributes ProductStagingAttribute[]
+  evidence   ProductStagingEvidence[]
+  conflicts  ProductStagingConflict[]
+
+  @@unique([runId, sourceProductKey])
+  @@index([storeId, primarySku])
+  @@index([storeId, catalogProductId])
+  @@index([storeId, shopifyProductId])
+  @@index([runId])
+}
+
+model ProductStagingVariant {
+  id               String               @id @default(cuid())
+  recordId         String
+  record           ProductStagingRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  catalogVariantId String?
+  catalogVariant   CatalogVariant?      @relation(fields: [catalogVariantId], references: [id], onDelete: SetNull)
+
+  sourceVariantKey    String
+  shopifyVariantId    String?
+  sku                 String?
+  title               String?
+  optionValues        Json?
+  position            Int?
+  priceCents          Int?
+  compareAtPriceCents Int?
+  currency            String?
+  rawPayload          Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([recordId, sourceVariantKey])
+  @@index([catalogVariantId])
+  @@index([sku])
+}
+
+model ProductStagingMedia {
+  id          String                  @id @default(cuid())
+  recordId    String
+  record      ProductStagingRecord    @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  source      ProductStagingSource
+  role        ProductStagingMediaRole @default(UNCLASSIFIED)
+  assetKey    String
+  url         String                  @db.Text
+  altText     String?                 @db.Text
+  mimeType    String?
+  width       Int?
+  height      Int?
+  isPrimary   Boolean                 @default(false)
+  contentHash String?
+  rawPayload  Json?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  @@unique([recordId, assetKey])
+  @@index([recordId, role])
+}
+
+model ProductStagingEvidence {
+  id           String               @id @default(cuid())
+  recordId     String
+  record       ProductStagingRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  source       ProductStagingSource
+  externalId   String?
+  locator      String?              @db.Text
+  fieldPath    String?
+  excerpt      String?              @db.Text
+  contentHash  String?
+  confidence   Float?
+  capturedAt   DateTime             @default(now())
+  rawReference Json?
+  createdAt    DateTime             @default(now())
+
+  attributes ProductStagingAttribute[]
+
+  @@index([recordId, source])
+  @@index([externalId])
+}
+
+model ProductStagingAttribute {
+  id         String                  @id @default(cuid())
+  recordId   String
+  record     ProductStagingRecord    @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  evidenceId String?
+  evidence   ProductStagingEvidence? @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+
+  key        String
+  ordinal    Int                  @default(0)
+  valueText  String?              @db.Text
+  valueJson  Json?
+  unit       String?
+  source     ProductStagingSource
+  confidence Float?
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+
+  @@unique([recordId, key, ordinal])
+  @@index([recordId, key])
+  @@index([evidenceId])
+}
+
+model ProductStagingConflict {
+  id         String                           @id @default(cuid())
+  recordId   String
+  record     ProductStagingRecord             @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  fieldName  String
+  candidates Json
+  status     ProductStagingVerificationStatus @default(CONFLICTED)
+  resolution String?
+  resolvedAt DateTime?
+  createdAt  DateTime                         @default(now())
+  updatedAt  DateTime                         @updatedAt
+
+  @@index([recordId, status])
+  @@index([fieldName])
 }
