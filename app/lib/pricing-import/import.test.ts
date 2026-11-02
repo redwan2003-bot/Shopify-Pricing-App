@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import { createTestPrisma } from "../../../test/support/prisma.ts";
 import { importPricingProfile, PricingImportValidationError } from "./import.ts";
 import { buildLny01PricingInput } from "../../../prisma/seed-data/lny01.ts";
 
@@ -11,7 +11,7 @@ import { buildLny01PricingInput } from "../../../prisma/seed-data/lny01.ts";
  * here uses one disposable shop domain, cleaned up in `after`.
  */
 const TEST_SHOP_DOMAIN = `pricing-import-test-${process.pid}.invalid`;
-const prisma = new PrismaClient({ datasources: { db: { url: "file:dev.sqlite?socket_timeout=45&connection_limit=1" } } });
+const prisma = createTestPrisma();
 
 after(async () => {
   await prisma.store.deleteMany({ where: { shopDomain: TEST_SHOP_DOMAIN } });

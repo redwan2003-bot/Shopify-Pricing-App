@@ -1,13 +1,13 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import { createTestPrisma } from "../../../test/support/prisma.ts";
 import { loadPricingCatalog } from "./catalog.ts";
 import { PricingProfileNotFound, StoreNotFound } from "../pricing/index.ts";
 
 const SHOP_DOMAIN = "imprintid-pricing-development.myshopify.com";
 const SKU = "LNY01";
 
-const prisma = new PrismaClient();
+const prisma = createTestPrisma();
 
 after(async () => {
   await prisma.$disconnect();

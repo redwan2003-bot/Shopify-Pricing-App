@@ -1,9 +1,9 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import { createTestPrisma } from "../../../test/support/prisma.ts";
 import { handleComplianceWebhook, normalizeComplianceTopic } from "./handle.ts";
 
-const prisma = new PrismaClient({ datasources: { db: { url: "file:dev.sqlite?socket_timeout=45&connection_limit=1" } } });
+const prisma = createTestPrisma();
 const SHOP = `compliance-test-${process.pid}.myshopify.com`;
 const OTHER = `compliance-test-other-${process.pid}.myshopify.com`;
 

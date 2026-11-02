@@ -1,6 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import { createTestPrisma } from "../../../test/support/prisma.ts";
 import {
   handleStorefrontPricingRequest,
   validateSigningSecret,
@@ -60,7 +60,7 @@ const SHOP_DOMAIN = "imprintid-pricing-development.myshopify.com";
 const SKU = "LNY01";
 const LNY01_PRODUCT_ID = "9442404663548"; // the codebase-wide convention for "the LNY01 product" (see product-resolver.test.ts)
 
-const prisma = new PrismaClient();
+const prisma = createTestPrisma();
 
 const SUFFIX = `${process.pid}-${Date.now()}`;
 const TENANT_A_DOMAIN = `storefront-bridge-test-a-${SUFFIX}.invalid`;

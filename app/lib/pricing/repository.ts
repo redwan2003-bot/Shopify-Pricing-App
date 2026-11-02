@@ -7,14 +7,20 @@ import {
 } from "./errors.ts";
 import type { PricingProfileData, PricingSource } from "./types.ts";
 
+// Explicit ordering: without it, child rows come back in whatever order the database
+// happens to use (SQLite rowid, Postgres heap order), which differs between engines.
+// Tiers are ordered by their quantity break; every other child by id for a stable result.
 const PRICING_PROFILE_INCLUDE = {
-  quantityTiers: true,
-  decorationRules: true,
-  decorationColorCharges: true,
-  optionGroups: { include: { optionValues: true } },
-  productColors: true,
-  productionRules: true,
-  packagingRules: true,
+  quantityTiers: { orderBy: [{ minQuantity: "asc" }, { id: "asc" }] },
+  decorationRules: { orderBy: { id: "asc" } },
+  decorationColorCharges: { orderBy: { id: "asc" } },
+  optionGroups: {
+    orderBy: { id: "asc" },
+    include: { optionValues: { orderBy: { id: "asc" } } },
+  },
+  productColors: { orderBy: { id: "asc" } },
+  productionRules: { orderBy: { id: "asc" } },
+  packagingRules: { orderBy: { id: "asc" } },
 } satisfies Prisma.PricingProfileInclude;
 
 type LoadedPricingProfile = Prisma.PricingProfileGetPayload<{

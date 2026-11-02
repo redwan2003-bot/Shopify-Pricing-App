@@ -1,6 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient, DecorationMethod } from "@prisma/client";
+import { DecorationMethod } from "@prisma/client";
+import { createTestPrisma } from "../../../test/support/prisma.ts";
 import { calculatePrice } from "./index.ts";
 
 /**
@@ -15,7 +16,7 @@ import { calculatePrice } from "./index.ts";
 const SHOP_DOMAIN = "imprintid-pricing-development.myshopify.com";
 const SKU = "LNY01";
 
-const prisma = new PrismaClient();
+const prisma = createTestPrisma();
 
 let cellPhoneLoopId: string;
 let standardAttachmentId: string;

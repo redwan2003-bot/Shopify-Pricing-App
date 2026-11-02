@@ -13,6 +13,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { RECONCILE_BATCH_SIZE } from "./constants.ts";
 import { loadOverridesByGid } from "./override-store.ts";
+import { parseProductGid } from "./gid.ts";
 import { resolveEnforceableCurrency } from "../pricing-api/currency-contract.ts";
 
 export interface CatalogCoverage {
@@ -80,16 +81,47 @@ export async function catalogCoverage(prisma: PrismaClient, storeId: string): Pr
   };
 }
 
+export interface CoverageColumns {
+  assignedProfileId: string | null;
+  assignmentSource: string | null;
+  coverageStatus: string;
+  enforcementReady: boolean;
+}
+
+export interface CoverageChange {
+  id: string;
+  productGid: string;
+  before: CoverageColumns;
+  after: CoverageColumns;
+}
+
+export interface ReconcileOptions {
+  /** Scope to these canonical product GIDs. An EMPTY list means "nothing to do", never "everything". */
+  onlyProductIds?: string[];
+  /** Compute and return the changes without writing anything. */
+  dryRun?: boolean;
+  /** Return the per-row changes (always returned for a dry run). */
+  collectChanges?: boolean;
+}
+
+const UPDATE_CONCURRENCY = 10;
+
 /**
  * Recomputes the denormalized coverage columns for a store's live catalog. Bounded:
  * processes `RECONCILE_BATCH_SIZE` products per pass, joins each to its override +
- * profile, and updates only rows whose derived state changed.
+ * profile, and updates only rows whose derived state changed (a few at a time in
+ * parallel, so a first-time reconcile of many linked products is not one round trip each).
+ *
+ * It never touches `policySyncedAt` or `policyDigest`, and `enforcementReady` is derived
+ * (it stays false until a product's `policySyncedAt` is set by the assignment processor).
  */
 export async function reconcileCatalogCoverage(
   prisma: PrismaClient,
   storeId: string,
-  opts: { onlyProductIds?: string[] } = {},
-): Promise<{ scanned: number; updated: number }> {
+  opts: ReconcileOptions = {},
+): Promise<{ scanned: number; updated: number; changes?: CoverageChange[] }> {
+  if (opts.onlyProductIds && opts.onlyProductIds.length === 0) return { scanned: 0, updated: 0, changes: [] };
+
   const store = await prisma.store.findUnique({ where: { id: storeId }, select: { shopCurrency: true } });
   const shopCurrency = store?.shopCurrency ?? null;
 
@@ -103,6 +135,7 @@ export async function reconcileCatalogCoverage(
   let scanned = 0;
   let updated = 0;
   let cursor: string | null = null;
+  const changes: CoverageChange[] = [];
 
   interface CoverageRow {
     id: string;
@@ -119,7 +152,7 @@ export async function reconcileCatalogCoverage(
       where: {
         storeId,
         removedFromShopifyAt: null,
-        ...(opts.onlyProductIds?.length ? { shopifyProductId: { in: opts.onlyProductIds } } : {}),
+        ...(opts.onlyProductIds ? { shopifyProductId: { in: opts.onlyProductIds } } : {}),
       },
       orderBy: { id: "asc" },
       take: RECONCILE_BATCH_SIZE,
@@ -143,6 +176,7 @@ export async function reconcileCatalogCoverage(
       { shopifyProductId: true, pricingProfileId: true, isActive: true },
     );
 
+    const pending: CoverageChange[] = [];
     for (const p of products) {
       scanned += 1;
       const ov = overrideByGid.get(p.shopifyProductId);
@@ -179,22 +213,108 @@ export async function reconcileCatalogCoverage(
         p.coverageStatus !== coverageStatus ||
         p.enforcementReady !== enforcementReady
       ) {
-        await prisma.catalogProduct.update({
-          where: { id: p.id },
-          data: {
+        pending.push({
+          id: p.id,
+          productGid: p.shopifyProductId,
+          before: {
+            assignedProfileId: p.assignedProfileId,
+            assignmentSource: p.assignmentSource,
+            coverageStatus: p.coverageStatus,
+            enforcementReady: p.enforcementReady,
+          },
+          after: {
             assignedProfileId,
             coverageStatus,
             enforcementReady,
             assignmentSource: assignedProfileId ? (p.assignmentSource ?? "override") : null,
           },
         });
-        updated += 1;
       }
     }
+
+    if (!opts.dryRun) {
+      for (let i = 0; i < pending.length; i += UPDATE_CONCURRENCY) {
+        await Promise.all(
+          pending.slice(i, i + UPDATE_CONCURRENCY).map((c) => prisma.catalogProduct.update({ where: { id: c.id }, data: c.after })),
+        );
+      }
+    }
+    updated += pending.length;
+    if (opts.dryRun || opts.collectChanges) changes.push(...pending);
 
     if (products.length < RECONCILE_BATCH_SIZE) break;
     cursor = products[products.length - 1]!.id;
   }
 
-  return { scanned, updated };
+  return opts.dryRun || opts.collectChanges ? { scanned, updated, changes } : { scanned, updated };
+}
+
+// ---------------------------------------------------------------------------------------
+// Best-effort entry points used by the sync and the SKU-link paths
+// ---------------------------------------------------------------------------------------
+
+export interface BestEffortReconcile {
+  ok: boolean;
+  scanned: number;
+  updated: number;
+  error?: string;
+}
+
+const SCOPE_CHUNK = 1000;
+
+function safeMessage(error: unknown): string {
+  return String(error instanceof Error ? error.message : error)
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, "<url>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
+/**
+ * Recomputes coverage for exactly these products. Derived data must never fail the
+ * operation that triggered it, so errors are returned, not thrown.
+ */
+export async function reconcileCoverageForProducts(prisma: PrismaClient, storeId: string, productGids: readonly string[]): Promise<BestEffortReconcile> {
+  const gids = [...new Set(productGids.map((g) => parseProductGid(g)).filter((g): g is string => g !== null))];
+  let scanned = 0;
+  let updated = 0;
+  try {
+    for (let i = 0; i < gids.length; i += SCOPE_CHUNK) {
+      const r = await reconcileCatalogCoverage(prisma, storeId, { onlyProductIds: gids.slice(i, i + SCOPE_CHUNK) });
+      scanned += r.scanned;
+      updated += r.updated;
+    }
+    return { ok: true, scanned, updated };
+  } catch (error) {
+    console.error("coverage reconcile failed (the triggering operation is unaffected):", safeMessage(error));
+    return { ok: false, scanned, updated, error: safeMessage(error) };
+  }
+}
+
+/**
+ * Coverage after a catalog sync. A sync can insert products that already have an override
+ * and can drop products an override used to cover, so the only rows whose derived state
+ * can differ from the default are those with an override OR those currently marked as
+ * covered. That is the scope, so the cost does not grow with the size of the catalog.
+ */
+export async function reconcileCoverageAfterSync(prisma: PrismaClient, storeId: string): Promise<BestEffortReconcile> {
+  try {
+    const [overrides, covered] = await Promise.all([
+      prisma.productPricingOverride.findMany({ where: { storeId }, select: { shopifyProductId: true } }),
+      prisma.catalogProduct.findMany({
+        where: {
+          storeId,
+          OR: [{ coverageStatus: { not: "unassigned" } }, { assignedProfileId: { not: null } }, { enforcementReady: true }],
+        },
+        select: { shopifyProductId: true },
+      }),
+    ]);
+    return await reconcileCoverageForProducts(prisma, storeId, [
+      ...overrides.map((o) => o.shopifyProductId),
+      ...covered.map((c) => c.shopifyProductId),
+    ]);
+  } catch (error) {
+    console.error("coverage reconcile failed (the sync is unaffected):", safeMessage(error));
+    return { ok: false, scanned: 0, updated: 0, error: safeMessage(error) };
+  }
 }

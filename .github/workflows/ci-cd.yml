@@ -9,91 +9,159 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  validate-and-test:
-    name: Test & Build (904 Tests)
+  # ---------------------------------------------------------------------------------------
+  # Both Shopify Functions are Rust (the Cart Transform and the Validation Function). Check
+  # formatting, run their tests and make sure each builds to a wasm module under Shopify's
+  # 256 KB limit. Runs in parallel with the application tests.
+  # ---------------------------------------------------------------------------------------
+  rust-functions:
+    name: Rust Function (${{ matrix.crate }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - imprintid-cart-pricing
+          - imprintid-cart-validation
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: 'npm'
+          node-version: 24
 
       - name: Setup Rust for Shopify Functions
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: rustfmt
 
-      - name: Install Dependencies
-        run: npm ci
-
-      - name: Generate Function Secret Configs
-        run: npm run fn:config
+      # Writes the gitignored src/config.secret.generated.rs the crate includes. A pull request
+      # from a fork has no secrets and uses the placeholder; the tests sign their own quotes, so
+      # they never depend on the real value. Only the fingerprint is printed, never the secret.
+      - name: Generate Function secret config
+        run: node extensions/${{ matrix.crate }}/scripts/generate-config.mjs
         env:
           IMPRINTID_CART_SIGNING_SECRET: ${{ secrets.IMPRINTID_CART_SIGNING_SECRET || 'dev_signing_secret_for_ci_test_run' }}
 
-      - name: Build native Cart Transform
-        run: cargo build --manifest-path extensions/imprintid-cart-pricing/Cargo.toml --target wasm32-unknown-unknown --release
+      - name: Check formatting
+        run: cargo fmt --check --manifest-path extensions/${{ matrix.crate }}/Cargo.toml
 
-      - name: Generate Prisma Client (SQLite & PostgreSQL)
+      - name: Run Rust tests
+        run: cargo test --manifest-path extensions/${{ matrix.crate }}/Cargo.toml
+
+      - name: Build the Function (wasm, release)
+        run: cargo build --manifest-path extensions/${{ matrix.crate }}/Cargo.toml --target wasm32-unknown-unknown --release
+
+      - name: Check the wasm stays under Shopify's 256 KB limit
         run: |
-          npx prisma generate --schema=prisma/schema.prisma
-          npx prisma generate --schema=prisma/schema.postgresql.prisma
+          wasm="extensions/${{ matrix.crate }}/target/wasm32-unknown-unknown/release/$(echo '${{ matrix.crate }}' | tr '-' '_').wasm"
+          size=$(stat -c%s "$wasm")
+          echo "$wasm: $size bytes"
+          test "$size" -lt 262144
 
-      - name: Check SQLite and PostgreSQL schemas match
+  # ---------------------------------------------------------------------------------------
+  # Application tests and build, against the isolated Neon TEST branch (never production).
+  # ---------------------------------------------------------------------------------------
+  validate-and-test:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # One run at a time against the shared test branch.
+    concurrency:
+      group: neon-test-branch
+      cancel-in-progress: false
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
         run: |
-          diff <(sed -E '/^\s*(provider|url)\s*=/d' prisma/schema.prisma) \
-               <(sed -E '/^\s*(provider|url)\s*=/d' prisma/schema.postgresql.prisma) \
-            || { echo "::error::prisma/schema.prisma and schema.postgresql.prisma differ beyond the datasource block"; exit 1; }
-        shell: bash
+          corepack enable
+          pnpm --version
 
-      # The PostgreSQL generate step above overwrites the SQLite client at the same default
-      # output path (neither schema declares a custom `output`), so the test suite would
-      # otherwise run against a Postgres-typed client with no postgresql:// DATABASE_URL.
-      # Regenerate the SQLite client right before tests run so it's the one in effect.
-      - name: Regenerate SQLite Prisma Client for tests
-        run: npx prisma generate --schema=prisma/schema.prisma
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
 
-      # A fresh CI checkout has no prisma/dev.sqlite and nothing has ever applied the SQLite
-      # migration history to it, so every Prisma call fails with "table does not exist".
-      - name: Apply SQLite migrations for tests
-        run: npx prisma migrate deploy --schema=prisma/schema.prisma
-
-      # A subset of tests (app/lib/pricing/lny01.test.ts and everything downstream of it) are
-      # explicitly documented as calculating against the real seeded LNY01 profile, not a
-      # fixture -- an empty-but-migrated database isn't enough for them.
-      # The test suite's own SHOP_DOMAIN constants (app/lib/pricing/lny01.test.ts and its
-      # downstream pricing-api tests) expect "imprintid-pricing-development.myshopify.com",
-      # not prisma/seed.ts's own default -- point the seed at the domain the tests already use.
-      - name: Seed the SQLite database for tests
-        run: npm run db:seed
+      - name: Generate Function Secret Configs
+        run: pnpm run fn:config
         env:
-          SEED_SHOP_DOMAIN: imprintid-pricing-development.myshopify.com
+          IMPRINTID_CART_SIGNING_SECRET: ${{ secrets.IMPRINTID_CART_SIGNING_SECRET || 'dev_signing_secret_for_ci_test_run' }}
+
+      # `pnpm test` loads .env.test with `node --env-file`, so the file must exist. It is built
+      # from the TEST_DATABASE_URL secret (the Neon test branch). The job refuses to run if the
+      # secret is missing or names the production endpoint, because the tests write data.
+      - name: Create the test environment file
+        run: |
+          set -euo pipefail
+          if [ -z "${TEST_DATABASE_URL:-}" ]; then
+            echo "::error title=Missing secret::TEST_DATABASE_URL is not set. Add the Neon TEST branch connection string under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          case "$TEST_DATABASE_URL" in
+            *ep-lively-dust-b4axu1i2*)
+              echo "::error title=Refusing the production database::TEST_DATABASE_URL points at the production endpoint."
+              exit 1
+              ;;
+          esac
+          umask 077
+          {
+            printf 'DATABASE_URL=%s\n' "$TEST_DATABASE_URL"
+            printf 'DATABASE_URL_UNPOOLED=%s\n' "${TEST_DATABASE_URL_UNPOOLED:-$TEST_DATABASE_URL}"
+            printf 'TEST_DATABASE_URL=%s\n' "$TEST_DATABASE_URL"
+            printf 'NEON_BRANCH=test\n'
+          } > .env.test
+          node -e 'console.log("test database host:", new URL(process.env.TEST_DATABASE_URL).host)'
+        env:
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+          TEST_DATABASE_URL_UNPOOLED: ${{ secrets.TEST_DATABASE_URL_UNPOOLED }}
+
+      - name: Generate Prisma Client
+        run: pnpm exec prisma generate
+
+      # The Rust validation Function is tested against a corpus generated from the TypeScript
+      # reference. Fail if the committed corpus no longer matches the reference.
+      - name: Check the validation parity corpus is current
+        run: |
+          node extensions/imprintid-cart-validation/scripts/generate-parity-corpus.mjs
+          git diff --exit-code -- extensions/imprintid-cart-validation/src/fixtures/parity-corpus.json
 
       - name: Run Full Test Suite
-        run: npm test
+        run: pnpm test
 
       - name: Build Web Application
-        run: npm run build
+        run: pnpm run build
 
   deploy-shopify-app:
     name: Deploy Shopify Extensions & Config
-    needs: validate-and-test
+    needs: [validate-and-test, rust-functions]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: 'npm'
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          pnpm --version
 
       - name: Setup Rust for Shopify Functions
         uses: dtolnay/rust-toolchain@stable
@@ -101,24 +169,17 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install Dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Generate Function Secret Configs
-        run: npm run fn:config
+        run: pnpm run fn:config
         env:
           IMPRINTID_CART_SIGNING_SECRET: ${{ secrets.IMPRINTID_CART_SIGNING_SECRET }}
 
-      # The Shopify CLI's JavaScript-Function build pipeline (GraphQL codegen, then javy)
-      # unconditionally shells out to `pnpm exec`, regardless of the project's own package
-      # manager -- confirmed by reproducing `spawn pnpm ENOENT` in a clean container with no
-      # pnpm installed. Node 22 ships Corepack, so this needs no extra dependency.
-      - name: Enable pnpm (required by the Shopify CLI's Function build pipeline)
-        run: |
-          corepack enable
-          pnpm --version
-
+      # Pinned to the version this project was validated with; a new major release changes
+      # command behaviour.
       - name: Install Shopify CLI
-        run: npm install -g @shopify/cli
+        run: npm install -g @shopify/cli@4.9.4
 
       - name: Validate Shopify production configuration
         run: shopify app config validate --config=production --json
@@ -133,7 +194,7 @@ jobs:
 
   build-docker-image:
     name: Build & Push Docker Image
-    needs: validate-and-test
+    needs: [validate-and-test, rust-functions]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:

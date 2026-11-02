@@ -69,5 +69,16 @@ export const CART_SIGNING_SECRET = ${JSON.stringify(secret)};
   "utf8",
 );
 
+// The deployed Validation Function is Rust (the JavaScript HMAC cost 27M instructions against
+// Shopify's 11M limit). Keep the generated value local/ignored exactly as the TypeScript
+// artifact above; neither file is committed.
+const rustOutPath = fileURLToPath(new URL("../src/config.secret.generated.rs", import.meta.url));
+writeFileSync(
+  rustOutPath,
+  `// GENERATED + GITIGNORED — see scripts/generate-config.mjs. Do not edit or commit.\n` +
+    `pub const CART_SIGNING_SECRET: &str = ${JSON.stringify(secret)};\n`,
+  "utf8",
+);
+
 const fp = secret.length ? createHash("sha256").update(secret, "utf8").digest("hex").slice(0, 8) : "0".repeat(8);
 console.log(`[generate-config] imprintid-cart-validation: wrote config.secret.generated.ts (${mode}, ${secret.length} bytes, sha256:${fp}…)`);

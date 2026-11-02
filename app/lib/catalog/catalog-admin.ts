@@ -35,7 +35,7 @@ import { parseSelectionDescriptor, selectionTargetsWholeCatalog, SelectionError,
 import { createAdminWritePort } from "./write-port.ts";
 import type { AdminGraphqlClientLike, ShopPolicyContext } from "./admin-client.ts";
 import type { StoreContext } from "./tenancy.ts";
-import { applyLinkReport, buildLinkReport } from "../pricing-import/link-products.ts";
+import { applyLinkReport, buildLinkReport, summarizeLinkReport, type LinkOptions } from "../pricing-import/link-products.ts";
 
 // ---------------------------------------------------------------------------
 // Loader
@@ -268,6 +268,26 @@ export interface CatalogActionContext {
   now?: () => Date;
 }
 
+/**
+ * Optional explicit SKU -> product id decisions for the SKU auto-link, sent as a JSON object in
+ * the `skuResolutions` form field. Invalid JSON is rejected rather than ignored.
+ */
+function readLinkOptions(form: FormData): { ok: true; options: LinkOptions } | { ok: false } {
+  const raw = form.get("skuResolutions");
+  if (raw === null || String(raw).trim() === "") return { ok: true, options: {} };
+  try {
+    const parsed = JSON.parse(String(raw)) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false };
+    const manualResolutions: Record<string, string> = {};
+    for (const [sku, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "string") manualResolutions[sku] = value;
+    }
+    return { ok: true, options: { manualResolutions } };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /** Intents that act on an existing job — the job MUST belong to this shop. */
 const JOB_INTENTS = new Set(["apply", "job.process", "job.retry", "job.resume", "rollback.plan", "rollback.process"]);
 
@@ -286,13 +306,32 @@ export async function handleCatalogAdminAction(ctx: CatalogActionContext, form: 
 
   switch (intent) {
     // -------------------------------------------------------- SKU auto-link
+    // Read-only: builds the SKU match report and returns exactly what linkBySku WOULD do.
+    // No Shopify metafield is written and no local override is touched.
+    case "linkBySkuPreview": {
+      if (!ctx.shopPolicy.ok) return fail(intent, "SHOP_POLICY_UNREADABLE", "could not read the shop's currency and policy — try again");
+      const opts = readLinkOptions(form);
+      if (!opts.ok) return fail(intent, "BAD_RESOLUTIONS", "skuResolutions must be a JSON object of SKU to product id");
+      const report = await buildLinkReport(prisma, ctx.admin, store.storeId, opts.options);
+      const summary = summarizeLinkReport(report);
+      return {
+        ok: true,
+        intent,
+        message: `Preview only, nothing written: ${summary.totals.matched} unique match(es), ${summary.totals.shopifyPolicyWrites} Shopify policy write(s) and ${summary.totals.overridesToCreate + summary.totals.overridesToUpdate} local override change(s) would be made; ${summary.totals.heldBack} profile(s) held back, ${summary.totals.blocked} blocked.`,
+        more: false,
+        data: summary,
+      };
+    }
+
     case "linkBySku": {
       if (!ctx.shopPolicy.ok) return fail(intent, "SHOP_POLICY_UNREADABLE", "could not read the shop's currency and policy — try again");
+      const opts = readLinkOptions(form);
+      if (!opts.ok) return fail(intent, "BAD_RESOLUTIONS", "skuResolutions must be a JSON object of SKU to product id");
 
       // This path is deliberately separate from bulk assignment. It only applies a
       // one-to-one profile/SKU match; profiles with no product or multiple candidates
       // are reported and left unassigned.
-      const report = await buildLinkReport(prisma, ctx.admin, store.storeId);
+      const report = await buildLinkReport(prisma, ctx.admin, store.storeId, opts.options);
       const applied = await applyLinkReport(prisma, ctx.admin, store.storeId, report);
       if (applied.errors.length) {
         return fail(intent, "SKU_LINK_PARTIAL", `SKU matching completed with ${applied.errors.length} Shopify write error(s).`, applied.errors.slice(0, 10));

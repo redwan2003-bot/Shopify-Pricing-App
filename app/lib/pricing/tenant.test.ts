@@ -1,6 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import { createTestPrisma } from "../../../test/support/prisma.ts";
 import { calculatePrice } from "./index.ts";
 import { PricingConfigurationInvalid, PricingProfileNotFound, StoreNotFound } from "./errors.ts";
 import { importPricingProfile } from "../pricing-import/import.ts";
@@ -21,7 +21,7 @@ const SHARED_SKU = "SHARED01";
 const OVERRIDE_SKU = "SHARED01-OVERRIDE";
 const SHOPIFY_PRODUCT_ID = "gid://shopify/Product/999999";
 
-const prisma = new PrismaClient();
+const prisma = createTestPrisma();
 
 function minimalImport(
   shopDomain: string,

@@ -1,0 +1,65 @@
+{
+  "buyerJourney": {
+    "step": "CHECKOUT_INTERACTION"
+  },
+  "shop": {
+    "enforcementPolicy": {
+      "jsonValue": {
+        "schema": 1,
+        "mode": "pilot",
+        "enabled": true,
+        "adjustmentVariantGid": "gid://shopify/ProductVariant/50668934103179",
+        "installBinding": "dev-imprintid-pricing-development-pilot-1",
+        "policyRevision": 13
+      }
+    }
+  },
+  "cart": {
+    "lines": [
+      {
+        "id": "gid://shopify/CartLine/0",
+        "quantity": 100,
+        "cost": {
+          "amountPerQuantity": {
+            "amount": "1.73"
+          },
+          "subtotalAmount": {
+            "amount": "173.0",
+            "currencyCode": "USD"
+          }
+        },
+        "sellingPlanAllocation": null,
+        "merchandise": {
+          "__typename": "ProductVariant",
+          "id": "gid://shopify/ProductVariant/49375196872843",
+          "product": {
+            "id": "gid://shopify/Product/8438071820427",
+            "pricingPolicy": {
+              "jsonValue": {
+                "schema": 1,
+                "required": true,
+                "active": true,
+                "profileRef": "cmuct92s400028z0kfhqzg5e7",
+                "profileRevision": 3,
+                "policyRevision": 1
+              }
+            }
+          }
+        },
+        "version": {
+          "value": "2"
+        },
+        "payload": {
+          "value": "{\"v\":2,\"installBinding\":\"dev-imprintid-pricing-development-pilot-1\",\"productGid\":\"gid://shopify/Product/8438071820427\",\"variantGid\":\"gid://shopify/ProductVariant/49375196872843\",\"quantity\":100,\"currency\":\"USD\",\"baseUnitPriceCents\":137,\"perUnitSurchargeCents\":0,\"flatSurchargeCents\":3600,\"lineTotalCents\":17300,\"adjustmentVariantGid\":\"gid://shopify/ProductVariant/50668934103179\",\"profileRef\":\"cmuct92s400028z0kfhqzg5e7\",\"profileRevision\":3,\"policyRevision\":13,\"configDigest\":\"sha256:eb7b77424d119e43c9fe2d88fa70525453bd02e06d8668641f2f343b03b6a620\",\"quoteId\":\"ed8ecb59-1fcd-44f8-bcd0-15c1c9c8bcd8\",\"issuedAtServer\":1793633787}"
+        },
+        "signature": {
+          "value": "9176bedf6d477b77bc1eb679d440e88710e66d1d15ce60c2cf5a7834e532f485"
+        },
+        "config": {
+          "value": "{\"decorationChargeCodes\":[\"SETUP_1C1L\"],\"decorationMethod\":\"SCREEN_PRINT\",\"optionValueIds\":[],\"packagingCode\":\"DEFAULT_CARTON\",\"productColorCode\":null,\"productionCode\":\"STANDARD\",\"quantity\":100}"
+        },
+        "parentRelationship": null
+      }
+    ]
+  }
+}

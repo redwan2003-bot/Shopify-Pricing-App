@@ -27,7 +27,7 @@
  *     are upserted idempotently, store-scoped.
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import {
   BULK_OPERATION_BY_ID_QUERY,
   BULK_OPERATION_RUN_QUERY,
@@ -38,11 +38,13 @@ import {
   type AdminGraphqlClientLike,
 } from "./admin-client.ts";
 import { RECONCILE_BATCH_SIZE, SYNC_OBJECTS_PER_REQUEST } from "./constants.ts";
+import { reconcileCoverageAfterSync } from "./coverage.ts";
 import { parseJsonl, type JsonlRecord } from "./jsonl.ts";
 import { parseProductGid, parseVariantGid } from "./gid.ts";
 import { acquireSyncLease, newWorkerToken, releaseSyncLease, renewSyncLease, LeaseGuard } from "./leases.ts";
 import { normalizeCurrencyCode } from "../pricing-api/currency-contract.ts";
 
+/** Products per `INSERT ... ON CONFLICT` statement (17 bound parameters per product). */
 const UPSERT_BATCH_SIZE = 200;
 /** The sentinel that makes "one active sync per shop" a database constraint. */
 export const ACTIVE_SYNC_SENTINEL = "active";
@@ -401,8 +403,9 @@ async function ingestBoundedStep(
       { maxObjects, now, guard },
     );
   } catch (error) {
-    const failed = await failSync(prisma, job.id, "INGEST_ERROR", error instanceof Error ? error.message : String(error), "partial");
-    return { ok: false, code: "INGEST_ERROR", message: "the result stream could not be read — the job can be resumed", state: toState(failed) };
+    const detail = describeIngestError(error);
+    const failed = await failSync(prisma, job.id, "INGEST_ERROR", detail, "partial");
+    return { ok: false, code: "INGEST_ERROR", message: `the result stream could not be read — the job can be resumed (${detail})`, state: toState(failed) };
   }
 
   if (!outcome.reachedEnd) {
@@ -416,6 +419,10 @@ async function ingestBoundedStep(
   const done = wasPartial
     ? await finishSync(prisma, job.id, "partial", now(), { productsRemoved: removedProducts, variantsRemoved: removedVariants })
     : await completeSync(prisma, job.id, now(), { productsRemoved: removedProducts, variantsRemoved: removedVariants });
+  // A sync can insert products that already have an override and drop products an override
+  // covered, so refresh the derived coverage columns. Scoped to products that have an override
+  // or are marked covered, and best-effort: it can never fail a sync that already finished.
+  await reconcileCoverageAfterSync(prisma, storeId);
   return { ok: true, state: toState(done) };
 }
 
@@ -590,7 +597,42 @@ function normalizeVariant(node: Record<string, unknown>, position: number): Norm
   };
 }
 
-/** Upserts a batch of products AND their full variant sets, store-scoped and idempotent. */
+/** Rows per variant statement: 12 bound parameters per row, far below the protocol limit. */
+const VARIANT_STATEMENT_ROWS = 500;
+
+/** Last occurrence wins — what sequential upserts of the same product would have left behind. */
+function lastWins<T>(rows: T[], key: (row: T) => string): T[] {
+  const byKey = new Map<string, T>();
+  for (const row of rows) byKey.set(key(row), row);
+  return [...byKey.values()];
+}
+
+function inChunks<T>(rows: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Upserts a batch of products AND their full variant sets, store-scoped and idempotent.
+ *
+ * SET-BASED: one parameterized `INSERT … ON CONFLICT … DO UPDATE` statement per bounded
+ * batch of products, and one per `VARIANT_STATEMENT_ROWS` variants, instead of one
+ * round-trip per row. The cost therefore no longer scales with network latency × rows,
+ * and no interactive-transaction time limit can be hit by a slow link.
+ *
+ * Semantics are those of the row-by-row version it replaced:
+ *  - products: create sets first/last seen; update refreshes the descriptive fields and
+ *    the seen markers, clears `removedFromShopifyAt`, and never touches `firstSeenAt`,
+ *    the pricing-coverage columns, or the row id;
+ *  - variants: a row whose sku/title/position are unchanged (and that is not marked
+ *    removed) only has its seen marker refreshed; any other existing row is rewritten.
+ *  - duplicates within one batch: a repeated PRODUCT id keeps the last occurrence (as the
+ *    sequential upserts did); a repeated VARIANT id is rejected before anything is written
+ *    (the old `createMany` failed on the unique constraint), so bad input is never hidden.
+ * Every conflict target includes `storeId`, so a statement can only ever match this
+ * store's rows.
+ */
 async function upsertProductBatch(
   prisma: PrismaClient,
   storeId: string,
@@ -598,115 +640,102 @@ async function upsertProductBatch(
   products: NormalizedProduct[],
   seenAt: Date,
 ): Promise<{ variants: number }> {
-  await prisma.$transaction(
-    products.map((p) =>
-      prisma.catalogProduct.upsert({
-        where: { storeId_shopifyProductId: { storeId, shopifyProductId: p.shopifyProductId } },
-        create: {
-          storeId,
-          shopifyProductId: p.shopifyProductId,
-          title: p.title,
-          handle: p.handle,
-          status: p.status,
-          vendor: p.vendor,
-          productType: p.productType,
-          tags: p.tags,
-          variantCount: p.variantCount || p.variants.length,
-          hasAnySku: p.hasAnySku,
-          shopifyUpdatedAt: p.shopifyUpdatedAt,
-          firstSeenAt: seenAt,
-          lastSeenAt: seenAt,
-          lastSeenSyncId: syncJobId,
-          removedFromShopifyAt: null,
-        },
-        update: {
-          title: p.title,
-          handle: p.handle,
-          status: p.status,
-          vendor: p.vendor,
-          productType: p.productType,
-          tags: p.tags,
-          variantCount: p.variantCount || p.variants.length,
-          hasAnySku: p.hasAnySku,
-          shopifyUpdatedAt: p.shopifyUpdatedAt,
-          lastSeenAt: seenAt,
-          lastSeenSyncId: syncJobId,
-          removedFromShopifyAt: null,
-        },
-      }),
-    ),
-  );
+  const writtenAt = new Date(); // stands in for Prisma's client-side @updatedAt
 
-  // Resolve the catalog row ids we just wrote, then reconcile variants in bulk.
-  const gids = products.map((p) => p.shopifyProductId);
-  const rows = await prisma.catalogProduct.findMany({
-    where: { storeId, shopifyProductId: { in: gids } },
-    select: { id: true, shopifyProductId: true },
-  });
-  const idByGid = new Map(rows.map((r) => [r.shopifyProductId, r.id]));
+  // O(n) duplicate-variant check BEFORE any statement runs, so a rejected batch writes nothing.
+  // Only the Shopify variant GID is named in the error — never any other data.
+  const seenVariantIds = new Set<string>();
+  for (const p of products) {
+    for (const v of p.variants) {
+      if (seenVariantIds.has(v.shopifyVariantId)) {
+        throw new Error(`duplicate variant id in one ingest batch: ${v.shopifyVariantId}`);
+      }
+      seenVariantIds.add(v.shopifyVariantId);
+    }
+  }
+
+  const productRows = lastWins(products, (p) => p.shopifyProductId);
+  const productValues = productRows.map(
+    (p) => Prisma.sql`(${crypto.randomUUID()}, ${storeId}, ${p.shopifyProductId}, ${p.title}, ${p.handle}, ${p.status}, ${p.vendor}, ${p.productType}, ${p.tags}, ${p.variantCount || p.variants.length}, ${p.hasAnySku}, ${p.shopifyUpdatedAt}, ${seenAt}, ${seenAt}, ${syncJobId}, NULL, ${writtenAt})`,
+  );
+  const written = await prisma.$queryRaw<{ id: string; shopifyProductId: string }[]>(Prisma.sql`
+    INSERT INTO "CatalogProduct"
+      ("id", "storeId", "shopifyProductId", "title", "handle", "status", "vendor", "productType", "tags",
+       "variantCount", "hasAnySku", "shopifyUpdatedAt", "firstSeenAt", "lastSeenAt", "lastSeenSyncId",
+       "removedFromShopifyAt", "updatedAt")
+    VALUES ${Prisma.join(productValues)}
+    ON CONFLICT ("storeId", "shopifyProductId") DO UPDATE SET
+      "title" = EXCLUDED."title",
+      "handle" = EXCLUDED."handle",
+      "status" = EXCLUDED."status",
+      "vendor" = EXCLUDED."vendor",
+      "productType" = EXCLUDED."productType",
+      "tags" = EXCLUDED."tags",
+      "variantCount" = EXCLUDED."variantCount",
+      "hasAnySku" = EXCLUDED."hasAnySku",
+      "shopifyUpdatedAt" = EXCLUDED."shopifyUpdatedAt",
+      "lastSeenAt" = EXCLUDED."lastSeenAt",
+      "lastSeenSyncId" = EXCLUDED."lastSeenSyncId",
+      "removedFromShopifyAt" = NULL,
+      "updatedAt" = EXCLUDED."updatedAt"
+    RETURNING "id", "shopifyProductId"`);
+  const idByGid = new Map(written.map((r) => [r.shopifyProductId, r.id]));
 
   const incoming = products.flatMap((p) =>
-    p.variants.map((v) => ({
-      storeId,
-      catalogProductId: idByGid.get(p.shopifyProductId)!,
-      shopifyVariantId: v.shopifyVariantId,
-      shopifyProductId: p.shopifyProductId,
-      title: v.title,
-      sku: v.sku,
-      position: v.position,
-      shopifyUpdatedAt: v.shopifyUpdatedAt,
-      lastSeenSyncId: syncJobId,
-      removedFromShopifyAt: null as Date | null,
-    })),
+    p.variants.map((v) => {
+      const catalogProductId = idByGid.get(p.shopifyProductId);
+      if (!catalogProductId) throw new Error(`catalog product ${p.shopifyProductId} was not returned by its upsert`);
+      return {
+        catalogProductId,
+        shopifyVariantId: v.shopifyVariantId,
+        shopifyProductId: p.shopifyProductId,
+        title: v.title,
+        sku: v.sku,
+        position: v.position,
+        shopifyUpdatedAt: v.shopifyUpdatedAt,
+      };
+    }),
   );
   if (incoming.length === 0) return { variants: 0 };
 
-  const existing = await prisma.catalogVariant.findMany({
-    where: { storeId, shopifyVariantId: { in: incoming.map((v) => v.shopifyVariantId) } },
-    select: { id: true, shopifyVariantId: true, sku: true, title: true, position: true, removedFromShopifyAt: true },
-  });
-  const existingByGid = new Map(existing.map((e) => [e.shopifyVariantId, e]));
-
-  const toCreate = incoming.filter((v) => !existingByGid.has(v.shopifyVariantId));
-  const toUpdate = incoming.filter((v) => existingByGid.has(v.shopifyVariantId));
-
-  for (let i = 0; i < toCreate.length; i += 500) {
-    await prisma.catalogVariant.createMany({ data: toCreate.slice(i, i + 500) });
-  }
-  // Only touch rows whose observable state actually changed.
-  const changed = toUpdate.filter((v) => {
-    const e = existingByGid.get(v.shopifyVariantId)!;
-    return e.sku !== v.sku || e.title !== v.title || e.position !== v.position || e.removedFromShopifyAt !== null;
-  });
-  if (changed.length) {
-    await prisma.$transaction(
-      changed.map((v) =>
-        prisma.catalogVariant.update({
-          where: { storeId_shopifyVariantId: { storeId, shopifyVariantId: v.shopifyVariantId } },
-          data: {
-            catalogProductId: v.catalogProductId,
-            shopifyProductId: v.shopifyProductId,
-            title: v.title,
-            sku: v.sku,
-            position: v.position,
-            shopifyUpdatedAt: v.shopifyUpdatedAt,
-            lastSeenSyncId: syncJobId,
-            removedFromShopifyAt: null,
-          },
-        }),
-      ),
+  for (const chunk of inChunks(incoming, VARIANT_STATEMENT_ROWS)) {
+    const variantValues = chunk.map(
+      (v) => Prisma.sql`(${crypto.randomUUID()}, ${storeId}, ${v.catalogProductId}, ${v.shopifyVariantId}, ${v.shopifyProductId}, ${v.title}, ${v.sku}, ${v.position}, ${v.shopifyUpdatedAt}, ${syncJobId}, NULL, ${writtenAt})`,
     );
-  }
-  // Everything else just needs its "seen this run" marker refreshed.
-  const untouched = toUpdate.filter((v) => !changed.includes(v)).map((v) => v.shopifyVariantId);
-  for (let i = 0; i < untouched.length; i += 500) {
-    await prisma.catalogVariant.updateMany({
-      where: { storeId, shopifyVariantId: { in: untouched.slice(i, i + 500) } },
-      data: { lastSeenSyncId: syncJobId },
-    });
+    await prisma.$executeRaw(Prisma.sql`
+      INSERT INTO "CatalogVariant" AS cv
+        ("id", "storeId", "catalogProductId", "shopifyVariantId", "shopifyProductId", "title", "sku", "position",
+         "shopifyUpdatedAt", "lastSeenSyncId", "removedFromShopifyAt", "updatedAt")
+      VALUES ${Prisma.join(variantValues)}
+      ON CONFLICT ("storeId", "shopifyVariantId") DO UPDATE SET
+        "catalogProductId" = CASE WHEN (cv."sku" IS DISTINCT FROM EXCLUDED."sku" OR cv."title" <> EXCLUDED."title" OR cv."position" <> EXCLUDED."position" OR cv."removedFromShopifyAt" IS NOT NULL) THEN EXCLUDED."catalogProductId" ELSE cv."catalogProductId" END,
+        "shopifyProductId" = CASE WHEN (cv."sku" IS DISTINCT FROM EXCLUDED."sku" OR cv."title" <> EXCLUDED."title" OR cv."position" <> EXCLUDED."position" OR cv."removedFromShopifyAt" IS NOT NULL) THEN EXCLUDED."shopifyProductId" ELSE cv."shopifyProductId" END,
+        "title" = CASE WHEN (cv."sku" IS DISTINCT FROM EXCLUDED."sku" OR cv."title" <> EXCLUDED."title" OR cv."position" <> EXCLUDED."position" OR cv."removedFromShopifyAt" IS NOT NULL) THEN EXCLUDED."title" ELSE cv."title" END,
+        "sku" = CASE WHEN (cv."sku" IS DISTINCT FROM EXCLUDED."sku" OR cv."title" <> EXCLUDED."title" OR cv."position" <> EXCLUDED."position" OR cv."removedFromShopifyAt" IS NOT NULL) THEN EXCLUDED."sku" ELSE cv."sku" END,
+        "position" = CASE WHEN (cv."sku" IS DISTINCT FROM EXCLUDED."sku" OR cv."title" <> EXCLUDED."title" OR cv."position" <> EXCLUDED."position" OR cv."removedFromShopifyAt" IS NOT NULL) THEN EXCLUDED."position" ELSE cv."position" END,
+        "shopifyUpdatedAt" = CASE WHEN (cv."sku" IS DISTINCT FROM EXCLUDED."sku" OR cv."title" <> EXCLUDED."title" OR cv."position" <> EXCLUDED."position" OR cv."removedFromShopifyAt" IS NOT NULL) THEN EXCLUDED."shopifyUpdatedAt" ELSE cv."shopifyUpdatedAt" END,
+        "lastSeenSyncId" = EXCLUDED."lastSeenSyncId",
+        "removedFromShopifyAt" = NULL,
+        "updatedAt" = EXCLUDED."updatedAt"`);
   }
 
   return { variants: incoming.length };
+}
+
+/**
+ * The underlying error of a failed ingest, safe to persist and to return to a caller:
+ * connection strings and credential-looking values are removed, whitespace is collapsed
+ * and the length is bounded.
+ */
+export function describeIngestError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, "<redacted-url>")
+    .replace(/\bnpg_[A-Za-z0-9]+/g, "<redacted>")
+    .replace(/(password|passwd|secret|token|api[_-]?key)(\s*[=:]\s*)\S+/gi, "$1$2<redacted>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
 }
 
 // ---------------------------------------------------------------------------

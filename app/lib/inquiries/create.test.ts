@@ -1,9 +1,9 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import { createTestPrisma } from "../../../test/support/prisma.ts";
 import { createInquiry, INQUIRY_LIMITS } from "./create.ts";
 
-const prisma = new PrismaClient({ datasources: { db: { url: "file:dev.sqlite?socket_timeout=45&connection_limit=1" } } });
+const prisma = createTestPrisma();
 const SHOP = `inquiry-test-${process.pid}.myshopify.com`;
 const OTHER_SHOP = `inquiry-test-other-${process.pid}.myshopify.com`;
 
@@ -72,7 +72,14 @@ test("throttles a single email per shop, but not other emails or shops", async (
   assert.equal(blocked.ok === false && blocked.status, 429);
   assert.equal((await createInquiry(prisma, OTHER_SHOP, { ...valid, email: "someone.else@example.com" }, now)).ok, true);
   assert.equal((await createInquiry(prisma, SHOP, { ...valid, email: "spammy@example.com" }, now)).ok, true, "another shop is unaffected");
-  const later = new Date(now.getTime() + INQUIRY_LIMITS.throttleWindowMs + 1000);
+  // `createdAt` is the database clock at insert time, so on a remote database the five
+  // inserts can land well after `now`. Anchor "later" to the newest real insert instead.
+  const newest = await prisma.inquiry.findFirstOrThrow({
+    where: { store: { shopDomain: OTHER_SHOP }, email: "spammy@example.com" },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  const later = new Date(Math.max(now.getTime(), newest.createdAt.getTime()) + INQUIRY_LIMITS.throttleWindowMs + 1000);
   assert.equal((await createInquiry(prisma, OTHER_SHOP, { ...valid, email: "spammy@example.com" }, later)).ok, true, "allowed again after the window");
 });
 

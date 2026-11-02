@@ -11,7 +11,7 @@
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import { createTestPrisma } from "../../../test/support/prisma.ts";
 import {
   computePricingContentDigest,
   digestPricingContent,
@@ -24,7 +24,7 @@ import {
 import { importPricingProfile } from "../pricing-import/import.ts";
 import { buildLny01PricingInput } from "../../../prisma/seed-data/lny01.ts";
 
-const prisma = new PrismaClient({ datasources: { db: { url: "file:dev.sqlite?socket_timeout=45&connection_limit=1" } } });
+const prisma = createTestPrisma();
 const SHOP = `revision-integrity-${process.pid}.myshopify.com`;
 
 after(async () => {

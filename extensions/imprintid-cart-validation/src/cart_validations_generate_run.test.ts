@@ -79,21 +79,27 @@ const UNAVAILABLE = "Dynamic pricing is temporarily unavailable. Please refresh 
 // §1 / §4 — activation readiness
 // ===========================================================================
 
-test("§4 activationReadiness(): NOT ready while effective-price runtime semantics are unverified", () => {
-  const r = activationReadiness();
-  assert.equal(r.ready, false);
-  if (!r.ready) assert.equal(r.reason, "effective_price_runtime_unverified");
+test("§4 activationReadiness(): ready — the runtime representation was proven on a real post-Transform cart (2026-11-02)", () => {
+  // See the real-capture tests at the end of this file: Shopify presents an expanded line as ONE
+  // top-level line carrying the effective price and no component lines.
+  assert.deepEqual(activationReadiness(), { ready: true });
 });
 
-test("§1 a fully valid signed v2 enforced quote is BLOCKED at checkout while price verification is disabled (pilot)", () => {
+test("§1 a fully valid signed v2 enforced quote whose effective price matches is ALLOWED at checkout (pilot)", () => {
   const r = runValidation(input([v2Line()], SHOP("pilot"), "CHECKOUT_INTERACTION"), SECRET);
-  assert.deepEqual(codes(r), ["not_activation_ready"]);
-  assert.deepEqual(messages(r), [UNAVAILABLE]);
+  assert.deepEqual(r, []);
 });
 
-test("§1 a fully valid signed v2 enforced quote is BLOCKED at checkout while price verification is disabled (universal)", () => {
-  const r = runValidation(input([v2Line()], SHOP("universal"), "CHECKOUT_INTERACTION"), SECRET);
-  assert.deepEqual(codes(r), ["not_activation_ready"]);
+test("§1 a fully valid signed v2 enforced quote whose effective price matches is ALLOWED at checkout (universal)", () => {
+  assert.deepEqual(runValidation(input([v2Line()], SHOP("universal"), "CHECKOUT_INTERACTION"), SECRET), []);
+});
+
+test("§1 an enforced line whose effective price does NOT match the signed quote is BLOCKED at checkout", () => {
+  // the Transform did not run (zero price) or the price was altered: never allowed through
+  const unexpanded = v2Line({ money: MONEY(0, 0) });
+  assert.deepEqual(codes(runValidation(input([unexpanded], SHOP("pilot"), "CHECKOUT_INTERACTION"), SECRET)), ["effective_price_mismatch"]);
+  const altered = v2Line({ money: MONEY(100, 10000) });
+  assert.deepEqual(codes(runValidation(input([altered], SHOP("pilot"), "CHECKOUT_COMPLETION"), SECRET)), ["effective_price_mismatch"]);
 });
 
 test("§1 unmarked pilot product (no policy metafield) remains ALLOWED while not ready", () => {
@@ -111,29 +117,33 @@ test("§1 direct adjustment-variant addition is BLOCKED under every policy, even
   }
 });
 
-test("§1 the readiness gate is in the EXPORTED path (cart interaction proceeds, checkout is blocked)", () => {
-  const q = v2Payload();
-  const result = cartValidationsGenerateRun({
-    buyerJourney: { step: "CHECKOUT_INTERACTION" },
-    shop: { enforcementPolicy: { jsonValue: SHOP("pilot") } },
-    cart: {
-      lines: [
-        {
-          id: VARIANT, quantity: 100,
-          cost: { amountPerQuantity: { amount: "1.82" }, subtotalAmount: { amount: "182.00", currencyCode: "USD" } },
-          sellingPlanAllocation: null,
-          merchandise: { __typename: "ProductVariant", id: VARIANT, product: { id: PRODUCT, pricingPolicy: { jsonValue: PRODUCT_POLICY } } },
-          version: { value: "2" }, payload: { value: JSON.stringify(q.payload) }, signature: { value: q.signature }, config: { value: q.configJson },
-          parentRelationship: null,
-        },
-      ],
-    },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any);
-  const errs = result.operations[0]!.validationAdd!.errors;
-  assert.equal(errs.length, 1);
-  assert.equal(errs[0]!.message, UNAVAILABLE);
-  assert.equal(errs[0]!.target, "$.cart");
+test("§1 the EXPORTED path blocks an enforced line that carries no quote at checkout but not at cart interaction", () => {
+  // (no signature check is involved, so this does not depend on the build's baked secret)
+  const exported = (step: string) =>
+    cartValidationsGenerateRun({
+      buyerJourney: { step },
+      shop: { enforcementPolicy: { jsonValue: SHOP("pilot") } },
+      cart: {
+        lines: [
+          {
+            id: VARIANT, quantity: 100,
+            cost: { amountPerQuantity: { amount: "0.0" }, subtotalAmount: { amount: "0.0", currencyCode: "USD" } },
+            sellingPlanAllocation: null,
+            merchandise: { __typename: "ProductVariant", id: VARIANT, product: { id: PRODUCT, pricingPolicy: { jsonValue: PRODUCT_POLICY } } },
+            version: null, payload: null, signature: null, config: null,
+            parentRelationship: null,
+          },
+        ],
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any).operations[0]!.validationAdd!.errors;
+  assert.deepEqual(exported("CART_INTERACTION"), []);
+  for (const step of ["CHECKOUT_INTERACTION", "CHECKOUT_COMPLETION"]) {
+    const errs = exported(step);
+    assert.equal(errs.length, 1, step);
+    assert.equal(errs[0]!.target, "$.cart");
+    assert.notEqual(errs[0]!.message, "", step);
+  }
 });
 
 test("§1 a valid signed quote is allowed during cart interaction so the Transform can be observed", () => {
@@ -304,8 +314,8 @@ test("§3 an adjustment component naming a variant the parent quote does NOT spe
 test("§3 multiset comparison is order-independent (components reversed still validate cleanly at the component level)", () => {
   const { parent, baseChild, flatChild } = componentSetup();
   const r = runValidation(input([flatChild, baseChild, parent], SHOP("universal")), SECRET);
-  assert.ok(codes(r).includes("not_activation_ready")); // readiness still blocks checkout; component order adds no integrity error
-  assert.ok(!codes(r).includes("component_forgery"));
+  assert.ok(!codes(r).includes("component_forgery")); // component order adds no integrity error
+  assert.ok(!codes(r).includes("not_activation_ready"));
 });
 
 test("§3 a cart discount does NOT cause a false component mismatch — component amounts come from amountPerQuantity (pre-discount)", () => {
@@ -339,7 +349,8 @@ test("malformed / oversized v2 attributes on an enforced line are blocked", () =
 // ===========================================================================
 
 test("errors are bounded (≤5), deterministic, deduplicated, all target $.cart", () => {
-  const lines = Array.from({ length: 12 }, (_, i) => v2Line({ id: `gid://shopify/CartLine/${i}` }));
+  // twelve enforced lines with no quote: every one is rejected, but the output stays bounded and deduplicated
+  const lines = Array.from({ length: 12 }, (_, i) => line({ id: `gid://shopify/CartLine/${i}` }));
   const r = runValidation(input(lines, SHOP("universal"), "CHECKOUT_INTERACTION"), SECRET);
   assert.ok(r.length >= 1 && r.length <= 5);
   assert.deepEqual(r, [...r].sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0)));

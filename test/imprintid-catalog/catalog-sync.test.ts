@@ -9,8 +9,8 @@
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { advanceCatalogSync, startCatalogSync, ACTIVE_SYNC_SENTINEL, computeBulkPollBackoffMs } from "../../app/lib/catalog/catalog-sync.ts";
-import { prisma, makeShopDomain, seedStore, cleanupShops, buildCatalogJsonl } from "./helpers.ts";
+import { advanceCatalogSync, startCatalogSync, ACTIVE_SYNC_SENTINEL, computeBulkPollBackoffMs, describeIngestError } from "../../app/lib/catalog/catalog-sync.ts";
+import { prisma, makeShopDomain, seedStore, cleanupShops, buildCatalogJsonl, seedProfile, seedOverride } from "./helpers.ts";
 import { FakeAdmin, fakeResultFetcher } from "./fake-admin.ts";
 
 const shops: string[] = [];
@@ -392,6 +392,27 @@ test("a partial bulk result completes the job as 'partial', never 'completed'", 
   assert.equal(res.state.productsUpserted, 1);
 });
 
+test("a finished sync refreshes coverage for products that already have an override", async () => {
+  const { storeId } = await newStore();
+  const profile = await seedProfile(storeId, { name: "Already linked" });
+  // The override exists BEFORE the product is first synced, as with the SKU link.
+  await seedOverride(storeId, "gid://shopify/Product/7701", profile.id);
+  await runSyncToCompletion(
+    storeId,
+    buildCatalogJsonl([
+      { id: "gid://shopify/Product/7701", title: "Linked", variants: [{ id: "gid://shopify/ProductVariant/77011", sku: "L" }] },
+      { id: "gid://shopify/Product/7702", title: "Plain", variants: [{ id: "gid://shopify/ProductVariant/77021", sku: "P" }] },
+    ]),
+  );
+  const linked = await prisma.catalogProduct.findFirstOrThrow({ where: { storeId, shopifyProductId: "gid://shopify/Product/7701" } });
+  const plain = await prisma.catalogProduct.findFirstOrThrow({ where: { storeId, shopifyProductId: "gid://shopify/Product/7702" } });
+  assert.equal(linked.coverageStatus, "assigned");
+  assert.equal(linked.assignedProfileId, profile.id);
+  assert.equal(linked.enforcementReady, false, "no policySyncedAt, so still not enforcement-ready");
+  assert.equal(linked.policySyncedAt, null);
+  assert.equal(plain.coverageStatus, "unassigned");
+});
+
 test("a sync only ever writes rows for its own store", async () => {
   const a = await newStore();
   const b = await newStore();
@@ -401,6 +422,150 @@ test("a sync only ever writes rows for its own store", async () => {
   assert.equal(await prisma.catalogProduct.count({ where: { storeId: a.storeId } }), 1);
   assert.equal(await prisma.catalogVariant.count({ where: { storeId: a.storeId } }), 1);
   assert.equal(await prisma.catalogProduct.count({ where: { storeId: a.storeId, shopifyProductId: "gid://shopify/Product/902" } }), 0);
+});
+
+// ---------------------------------------------------------------------------
+// Set-based upsert semantics (one INSERT … ON CONFLICT … DO UPDATE per bounded batch).
+// ---------------------------------------------------------------------------
+
+test("upsert semantics: unchanged variants are only re-marked, changed ones are rewritten, products are refreshed", async () => {
+  const { storeId } = await newStore();
+  const P = "gid://shopify/Product/7101";
+  const V1 = "gid://shopify/ProductVariant/7101";
+  const V2 = "gid://shopify/ProductVariant/7102";
+
+  const first = await runSyncToCompletion(
+    storeId,
+    buildCatalogJsonl([{ id: P, title: "Old title", handle: "old", vendor: "Acme", variants: [{ id: V1, sku: "S1" }, { id: V2, sku: "S2" }] }]),
+  );
+  const product0 = await prisma.catalogProduct.findFirstOrThrow({ where: { storeId, shopifyProductId: P } });
+  assert.equal(product0.lastSeenSyncId, first.jobId);
+
+  // State the sync does NOT own (the policy digest), a coverage state that a real override
+  // justifies, plus a "removed" marker and a stale variant timestamp.
+  const marker = new Date("2026-02-02T00:00:00Z");
+  const covering = await seedProfile(storeId, { name: "Covers P" });
+  await seedOverride(storeId, P, covering.id);
+  await prisma.catalogProduct.update({
+    where: { id: product0.id },
+    data: { policyDigest: "digest-keep", coverageStatus: "assigned", assignedProfileId: covering.id, removedFromShopifyAt: marker },
+  });
+  await prisma.catalogVariant.updateMany({ where: { storeId }, data: { shopifyUpdatedAt: marker } });
+
+  const second = await runSyncToCompletion(
+    storeId,
+    buildCatalogJsonl([{ id: P, title: "New title", handle: "new", vendor: "Globex", variants: [{ id: V1, sku: "S1" }, { id: V2, sku: "S2-changed" }] }]),
+  );
+
+  const product1 = await prisma.catalogProduct.findFirstOrThrow({ where: { storeId, shopifyProductId: P } });
+  assert.equal(product1.id, product0.id, "the row id is preserved");
+  assert.equal(product1.title, "New title");
+  assert.equal(product1.handle, "new");
+  assert.equal(product1.vendor, "Globex");
+  assert.equal(product1.lastSeenSyncId, second.jobId);
+  assert.equal(product1.removedFromShopifyAt, null, "a product seen again is revived");
+  assert.equal(product1.firstSeenAt.getTime(), product0.firstSeenAt.getTime(), "firstSeenAt is never rewritten");
+  assert.equal(product1.policyDigest, "digest-keep", "the policy digest is not touched by a sync");
+  assert.equal(product1.coverageStatus, "assigned", "coverage follows the override, which still exists");
+  assert.equal(product1.assignedProfileId, covering.id);
+
+  const v1 = await prisma.catalogVariant.findFirstOrThrow({ where: { storeId, shopifyVariantId: V1 } });
+  const v2 = await prisma.catalogVariant.findFirstOrThrow({ where: { storeId, shopifyVariantId: V2 } });
+  assert.equal(v1.lastSeenSyncId, second.jobId, "an unchanged variant is still marked as seen");
+  assert.equal(v1.shopifyUpdatedAt?.getTime(), marker.getTime(), "an unchanged variant's other columns are left alone");
+  assert.equal(v2.sku, "S2-changed");
+  assert.equal(v2.lastSeenSyncId, second.jobId);
+  assert.equal(v2.shopifyUpdatedAt, null, "a changed variant is rewritten from the incoming row");
+  assert.equal(await prisma.catalogVariant.count({ where: { storeId } }), 2, "no duplicates");
+});
+
+test("upsert semantics: a product with more variants than one statement carries is stored completely", async () => {
+  const { storeId } = await newStore();
+  const P = "gid://shopify/Product/7201";
+  const variants = Array.from({ length: 1200 }, (_, i) => ({ id: `gid://shopify/ProductVariant/${720_000 + i}`, sku: i % 2 === 0 ? `SKU-${i}` : undefined }));
+  const { state } = await runSyncToCompletion(storeId, buildCatalogJsonl([{ id: P, title: "Big", variants }]));
+
+  assert.equal(state.status, "completed");
+  assert.equal(await prisma.catalogVariant.count({ where: { storeId, shopifyProductId: P } }), 1200);
+  assert.equal(await prisma.catalogVariant.count({ where: { storeId, sku: { not: null } } }), 600);
+  const last = await prisma.catalogVariant.findFirstOrThrow({ where: { storeId, shopifyVariantId: "gid://shopify/ProductVariant/720999" } });
+  assert.equal(last.position, 999, "positions survive the split into statements");
+  const product = await prisma.catalogProduct.findFirstOrThrow({ where: { storeId, shopifyProductId: P } });
+  assert.equal(product.hasAnySku, true);
+});
+
+test("upsert semantics: the same product twice in one batch keeps the later row; both occurrences' variants are stored", async () => {
+  const { storeId } = await newStore();
+  const P = "gid://shopify/Product/7301";
+  await runSyncToCompletion(
+    storeId,
+    buildCatalogJsonl([
+      { id: P, title: "First", variants: [{ id: "gid://shopify/ProductVariant/73011", sku: "A" }] },
+      { id: P, title: "Second", variants: [{ id: "gid://shopify/ProductVariant/73012", sku: "B" }] },
+    ]),
+  );
+  const rows = await prisma.catalogProduct.findMany({ where: { storeId } });
+  assert.equal(rows.length, 1, "one product row");
+  assert.equal(rows[0].title, "Second", "last occurrence wins");
+  const variants = await prisma.catalogVariant.findMany({ where: { storeId }, orderBy: { sku: "asc" } });
+  assert.deepEqual(variants.map((v) => v.sku), ["A", "B"], "variants of both occurrences are kept");
+  assert.ok(variants.every((v) => v.catalogProductId === rows[0].id));
+});
+
+/** Runs a sync over `jsonl` until it fails; returns the failed (not ok) result. */
+async function runSyncExpectingFailure(storeId: string, jsonl: string) {
+  const admin = new FakeAdmin();
+  const fetchResult = fakeResultFetcher({ [RESULT_URL]: jsonl });
+  const started = await startCatalogSync(prisma, storeId, admin, `k-${Math.random()}`);
+  assert.ok(started.ok);
+  admin.setOperationStatus(started.state.bulkOperationId!, { status: "COMPLETED", url: RESULT_URL, objectCount: jsonl.split("\n").filter(Boolean).length });
+
+  // The first step moves the job from polling to ingesting; the failure appears on a later one.
+  let res = await advanceCatalogSync(prisma, storeId, started.state.jobId, { admin, fetchResult });
+  for (let steps = 0; res.ok && !res.state.done && steps < 10; steps++) {
+    res = await advanceCatalogSync(prisma, storeId, started.state.jobId, { admin, fetchResult });
+  }
+  if (res.ok) assert.fail(`expected a failure, got ${JSON.stringify(res.state)}`);
+  return res;
+}
+
+test("INGEST_ERROR returns and records the underlying error", async () => {
+  const { storeId } = await newStore();
+  const res = await runSyncExpectingFailure(storeId, JSON.stringify({ id: "not-a-product-gid", title: "x" }) + "\n");
+  assert.equal(res.code, "INGEST_ERROR");
+  assert.match(res.message, /catalog line has no valid product id/, "the underlying message is returned");
+  assert.match(res.state?.errorMessage ?? "", /catalog line has no valid product id/, "and recorded on the job");
+});
+
+test("a repeated variant id in one batch is rejected with a safe INGEST_ERROR and nothing is written", async () => {
+  const { storeId } = await newStore();
+  const V = "gid://shopify/ProductVariant/7401";
+  const res = await runSyncExpectingFailure(
+    storeId,
+    buildCatalogJsonl([{ id: "gid://shopify/Product/7400", title: "Dup", variants: [{ id: V, sku: "A" }, { id: V, sku: "B" }] }]),
+  );
+  assert.equal(res.code, "INGEST_ERROR");
+  assert.match(res.message, /duplicate variant id in one ingest batch/);
+  assert.ok(res.message.includes(V), "names the offending Shopify id");
+  assert.ok(!/postgres|npg_|password/i.test(res.message), "carries nothing but the id");
+  assert.equal(res.state?.status, "partial", "the job is resumable, not completed");
+  assert.equal(await prisma.catalogProduct.count({ where: { storeId } }), 0, "the check runs before any statement");
+  assert.equal(await prisma.catalogVariant.count({ where: { storeId } }), 0);
+});
+
+test("describeIngestError removes connection strings and credential-looking values and bounds the length", () => {
+  const nasty = new Error(
+    "connect failed for postgresql://neondb_owner:npg_AbCdEf123456@ep-x-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require\n  password=hunter2 and token: abc.def   npg_ZZZZ9999",
+  );
+  const out = describeIngestError(nasty);
+  assert.ok(!out.includes("npg_"), out);
+  assert.ok(!out.includes("neondb_owner"), out);
+  assert.ok(!out.includes("hunter2"), out);
+  assert.ok(!out.includes("abc.def"), out);
+  assert.ok(!out.includes("\n"));
+  assert.match(out, /<redacted-url>/);
+  assert.equal(describeIngestError("x".repeat(5000)).length, 300);
+  assert.equal(describeIngestError("plain failure"), "plain failure");
 });
 
 test("§10 — 6,500 products with variants ingest in bounded batches with bounded memory", async () => {
@@ -451,6 +616,6 @@ test("§10 — 6,500 products with variants ingest in bounded batches with bound
 
   assert.ok(heapDeltaMb < 120, `heap delta ${heapDeltaMb.toFixed(1)}MB stays well under a full-catalog buffer`);
   // eslint-disable-next-line no-console
-  console.log(`[perf] 6,500 products + 6,500 variants: ${elapsedMs.toFixed(0)}ms, heap +${heapDeltaMb.toFixed(1)}MB, upsert batches=${Math.ceil(N / 200)}, max batch=200`);
-  assert.ok(elapsedMs < 180_000);
+  console.log(`[perf] ${N} products + ${N} variants: ${elapsedMs.toFixed(0)}ms (${(elapsedMs / N).toFixed(1)}ms/product), heap +${heapDeltaMb.toFixed(1)}MB`);
+  assert.ok(elapsedMs < 180_000, `ingest took ${elapsedMs.toFixed(0)}ms (budget 180000ms)`);
 });

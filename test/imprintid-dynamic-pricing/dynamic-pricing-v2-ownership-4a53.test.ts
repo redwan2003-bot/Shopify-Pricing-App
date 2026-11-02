@@ -329,7 +329,7 @@ test("5B.3A-5: a quantity change clears the held v2 attributes synchronously", a
 test("5B.3A-6: a configuration change clears the held v2 attributes synchronously", async () => {
   const { dom, root, block } = await setup();
   await wait(90);
-  const colors = q(dom, "[data-imprintid-pricing-colors]") as HTMLSelectElement;
+  const colors = q(dom, "[data-imprintid-pricing-colors]") as unknown as HTMLSelectElement;
   colors.value = "2";
   colors.dispatchEvent(new (dom.window as unknown as { Event: typeof Event }).Event("change", { bubbles: true }));
   assert.equal((block as { cartPricing: unknown }).cartPricing, null, "cleared synchronously on config change");

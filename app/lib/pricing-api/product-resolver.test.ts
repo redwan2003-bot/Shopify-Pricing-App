@@ -1,6 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import { createTestPrisma } from "../../../test/support/prisma.ts";
 import {
   parseShopifyNumericId,
   toProductGid,
@@ -19,7 +19,7 @@ import type { PricingProfileImportInput } from "../pricing-import/types.ts";
  * Admin GraphQL client is ALWAYS mocked — no test calls the live development store.
  */
 
-const prisma = new PrismaClient();
+const prisma = createTestPrisma();
 const SUFFIX = `${process.pid}-${Date.now()}`;
 const STORE_A = `resolver-test-a-${SUFFIX}.invalid`;
 const STORE_B = `resolver-test-b-${SUFFIX}.invalid`;
