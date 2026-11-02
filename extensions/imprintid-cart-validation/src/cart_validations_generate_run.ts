@@ -39,7 +39,10 @@ import { expectedExpandedComponents, hasComponentMultisetMismatch } from "./expa
  * pricing-unavailable message — a valid v2 signature does NOT allow checkout. Cart
  * interaction is permitted solely to observe Shopify's post-Transform representation;
  * it cannot be used to complete checkout. Only genuinely-unenforced lines
- * (unmarked-under-pilot, ordinary-under-disabled) otherwise proceed;
+ * (unmarked-under-pilot, ordinary-under-disabled) otherwise proceed.
+ * The gate is now OPEN (2026-11-02): the representation was observed on a real cart (see
+ * `real-capture-checkout.test.ts`) and is verified there, so an enforced line is allowed only
+ * when its quote verifies AND its effective price equals the signed line total;
  * direct adjustment-variant additions stay blocked under every policy. The gate lives in
  * `runValidation` / `cartValidationsGenerateRun`, not merely in helpers or tests.
  *
@@ -58,11 +61,14 @@ const TARGET = "$.cart";
 
 /**
  * Whether the *exact effective-price / component-multiset* comparison may ACCEPT a line
- * as correctly priced. Stays `false` until a `shopify app function replay` on a real
- * post-Cart-Transform cart proves the runtime component + quantity representation
- * (Task 5B.3). Rejecting a mismatch is always safe and is NOT gated by this flag.
+ * as correctly priced. It stayed `false` until a real post-Cart-Transform cart proved the
+ * runtime component + quantity representation. That happened on 2026-11-02 (LNY01, quantity
+ * 100): Shopify presents the expanded line as ONE top-level line with `amountPerQuantity`
+ * 1.73 and `subtotalAmount` 173.0 and no component lines, which the "no observed components"
+ * branch below compares against the signed `lineTotalCents`. Rejecting a mismatch is always
+ * safe and was never gated by this flag.
  */
-const EFFECTIVE_PRICE_ENFORCED = false;
+const EFFECTIVE_PRICE_ENFORCED = true;
 
 const MAX_ERRORS = 5;
 
