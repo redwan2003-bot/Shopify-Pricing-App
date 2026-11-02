@@ -1,3 +1,5 @@
+> **Historical document (September 2026).** Written while the app was hosted on Render with SQLite/Postgres. Production now runs on Cloudflare Workers + Neon; see docs/PRODUCTION_DEPLOYMENT.md. References to Render, Docker or `prisma/schema.postgresql.prisma` below describe the former setup.
+
 # Shopify Production Architecture Audit
 
 Read-only audit performed 2026-09-25 against commit `aedc17e`. Scope: everything checkable from

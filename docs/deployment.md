@@ -8,7 +8,7 @@ the production config, set the same HTTPS origin in all three places:
 
 1. `SHOPIFY_APP_URL` in the hosting provider.
 2. `application_url` in `shopify.app.production.toml`.
-3. The `/api/auth` redirect URL and `/apps/imprintid-pricing` proxy URL in that file.
+3. The `/auth/callback` and `/auth/shopify/callback` redirect URLs and `/apps/imprintid-pricing` proxy URL in that file.
 
 Then deploy the configuration with the production config selected:
 

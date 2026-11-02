@@ -1,3 +1,5 @@
+> **Historical document (September 2026).** Written while the app was hosted on Render with SQLite/Postgres. Production now runs on Cloudflare Workers + Neon; see docs/PRODUCTION_DEPLOYMENT.md. References to Render, Docker or `prisma/schema.postgresql.prisma` below describe the former setup.
+
 # Production Database Readiness
 
 Performed 2026-09-25. **Scope limit up front:** this environment has no credentials for Render's
