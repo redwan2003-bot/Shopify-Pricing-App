@@ -176,6 +176,15 @@ jobs:
         env:
           IMPRINTID_CART_SIGNING_SECRET: ${{ secrets.IMPRINTID_CART_SIGNING_SECRET }}
 
+      # The Worker and both Shopify Functions must share exactly one signing secret.
+      # Refuse to publish when the Actions secret drifts from the reviewed production
+      # fingerprint; only the non-secret SHA-256 prefix is logged.
+      - name: Verify production signing-secret fingerprint
+        run: node scripts/verify-signing-secret-fingerprint.mjs
+        env:
+          IMPRINTID_CART_SIGNING_SECRET: ${{ secrets.IMPRINTID_CART_SIGNING_SECRET }}
+          IMPRINTID_CART_SIGNING_SECRET_FINGERPRINT: d23c73d4
+
       # Pinned to the version this project was validated with; a new major release changes
       # command behaviour.
       - name: Install Shopify CLI
