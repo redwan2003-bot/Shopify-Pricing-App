@@ -1,3 +1,5 @@
+> **Historical document (September 2026).** Written while the app was hosted on Render with SQLite/Postgres. Production now runs on Cloudflare Workers + Neon; see docs/PRODUCTION_DEPLOYMENT.md. References to Render, Docker or `prisma/schema.postgresql.prisma` below describe the former setup.
+
 # Release Readiness — ImprintID Dynamic Pricing
 
 Baseline frozen at commit `aedc17e` (tagged locally `release-baseline-2026-09-25`, **not pushed**).
