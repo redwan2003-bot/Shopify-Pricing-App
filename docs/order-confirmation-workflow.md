@@ -29,7 +29,7 @@ and validated metadata belong in the database. The intake service moves the work
 ### Private storage implementation
 
 Production uses a private Cloudflare R2 bucket through the S3-compatible API.
-The application never writes artwork or proofs to Render's local filesystem.
+The application never writes artwork or proofs to the Worker (it has no local filesystem).
 It creates short-lived presigned `PUT` URLs for uploads and presigned `GET`
 URLs for staff/customer access. Object keys are restricted to
 `orders/<workflow-id>/artwork/...` or `orders/<workflow-id>/proofs/...` and the

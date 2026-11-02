@@ -1,143 +1,162 @@
-# Production Deployment & CI/CD Guide
+# Production Deployment
 
-This guide outlines the production architecture, Docker containerization, PostgreSQL database provisioning, and GitHub Actions CI/CD automation for **ImprintID Dynamic Pricing**.
+ImprintID Dynamic Pricing runs on **Cloudflare Workers** with a **Neon PostgreSQL** database.
+Shopify Functions (Cart Transform and Validation, both Rust) and the app configuration are
+released through Shopify app versions. There is no container, Docker image or other host.
 
----
-
-## 1. Architecture Overview
-
-```mermaid
-graph TD
-    ShopifyStore["Shopify Online Storefront"] -->|App Proxy /apps/imprintid-pricing| WebApp["React Router Web App Container"]
-    WebApp -->|Prisma Client| PostgresDB[("Managed PostgreSQL Database")]
-    GitHub["GitHub Repo: Shopify-Pricing-App"] -->|Push to main| Actions["GitHub Actions Runner (ubuntu-latest)"]
-    Actions -->|Test & Validate| TestRun["904 Automated Tests"]
-    Actions -->|Compile Wasm with Javy| Functions["Shopify Cart Transform & Validation Functions"]
-    Actions -->|shopify app deploy| ShopifyPartners["Shopify Partner Platform"]
-    Actions -->|Build & Push| GHCR["GitHub Container Registry / Docker Hub"]
+```
+GitHub (main) --CI--> tests + Rust Function builds --> Shopify app version (extensions + config)
+Operator ------------> pnpm run build && pnpm exec wrangler deploy --> Cloudflare Worker
+Worker --------------> Neon PostgreSQL (pooled connection, one client per request)
 ```
 
----
-
-## 2. GitHub Actions CI/CD Pipeline
-
-The workflow is defined at [`.github/workflows/ci-cd.yml`](file:///C:/Users/reahs/Documents/imprintid-shopify-pricing/.github/workflows/ci-cd.yml).
-
-### Workflow Jobs
-1. **`validate-and-test`**:
-   - Runs on `ubuntu-latest`.
-   - Generates Prisma client for SQLite and PostgreSQL.
-   - Runs `npm test` verifying all 904 test assertions.
-   - Builds the production React Router bundle.
-2. **`deploy-shopify-app`**:
-   - Runs automatically on merge to `main`.
-   - Compiles Shopify Functions (`javy` executes natively on Linux without Windows WDAC restrictions).
-   - Deploys Theme App Extensions and Functions directly to Shopify with `shopify app deploy --allow-updates`.
-3. **`build-docker-image`**:
-   - Builds multi-platform Docker container using multi-stage [`Dockerfile`](file:///C:/Users/reahs/Documents/imprintid-shopify-pricing/Dockerfile).
-   - Publishes image to GitHub Container Registry (`ghcr.io/<org>/Shopify-Pricing-App:latest`).
-
-### Required GitHub Secrets
-In your GitHub repository (`https://github.com/redwan2003-bot/Shopify-Pricing-App/settings/secrets/actions`), add the following:
-
-| Secret Name | Purpose | Example / Source |
-|---|---|---|
-| `SHOPIFY_CLI_PARTNERS_TOKEN` | Token for non-interactive `shopify app deploy` | Generated in Shopify Partner Dashboard > Settings > Manage CLI tokens |
-| `IMPRINTID_CART_SIGNING_SECRET` | 54-character signing secret | From `.env` |
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@host:5432/dbname?schema=public` |
+Production Worker: `https://shopify-pricing-app.pdbd-primeit.workers.dev`
+(`wrangler.jsonc`, name `shopify-pricing-app`). A separate preview Worker,
+`shopify-pricing-app-preview`, is used to try changes before production.
 
 ---
 
-## 3. PostgreSQL Database Setup
+## 1. CI/CD (`.github/workflows/ci-cd.yml`)
 
-### Schema & Migrations
-- Development uses SQLite (`prisma/schema.prisma`).
-- Production uses PostgreSQL (`prisma/schema.postgresql.prisma`).
-- Pre-generated PostgreSQL migration is ready at [`prisma/migrations_postgresql/20260922000000_init_postgresql/migration.sql`](file:///C:/Users/reahs/Documents/imprintid-shopify-pricing/prisma/migrations_postgresql/20260922000000_init_postgresql/migration.sql).
+| Job | Runs on | What it does |
+| --- | --- | --- |
+| `rust-functions` (matrix: `imprintid-cart-pricing`, `imprintid-cart-validation`) | every push / PR | `cargo fmt --check`, `cargo test`, release wasm build, wasm must be under 256 KB |
+| `validate-and-test` | every push / PR | `pnpm install --frozen-lockfile`, Prisma client, validation parity corpus check, `pnpm test` against the Neon **test** branch, `pnpm run build` |
+| `deploy-shopify-app` | push to `main` / manual only, after both jobs above | `shopify app deploy` of the extensions and `shopify.app.production.toml` |
 
-### Deploying to PostgreSQL
-To apply the schema to a new PostgreSQL instance:
+CI does **not** deploy the Worker. A push to `main` creates and releases a Shopify app version
+automatically, so treat a merge to `main` as a release of the Functions and app configuration.
+
+### GitHub Actions secrets
+
+| Secret | Purpose |
+| --- | --- |
+| `TEST_DATABASE_URL` (and optionally `TEST_DATABASE_URL_UNPOOLED`) | Neon **test** branch. The job refuses to run if it names the production endpoint. |
+| `IMPRINTID_CART_SIGNING_SECRET` | Baked into both Functions at build time. Must equal the Worker's value. |
+| `SHOPIFY_APP_AUTOMATION_TOKEN` | Lets the Shopify CLI deploy from CI. |
+
+---
+
+## 2. Worker secrets
+
+Set with `pnpm exec wrangler secret put <NAME>` (or `wrangler secret bulk`). Values are never
+stored in git; `.env.production.example` lists names with placeholders only.
+
+`DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES`,
+`SHOPIFY_APP_URL`, `IMPRINTID_CART_SIGNING_SECRET`, plus the R2 variables if artwork upload is
+used. `IMPRINTID_ADJUSTMENT_VARIANT_ID` is optional (single-store pinning only).
+
+Deploy the Worker (preview first, then production):
+
 ```bash
-npx prisma db push --schema=prisma/schema.postgresql.prisma
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm exec wrangler deploy --name shopify-pricing-app-preview
+pnpm exec wrangler deploy --name shopify-pricing-app
 ```
 
-### Seeding Catalog Data (pricing profiles + product links)
+---
 
-The storefront only prices a product when **three things agree**: the pricing profile exists in
+## 3. Database (Neon)
+
+* Production and test are separate Neon branches/endpoints. Tests and CI use the test branch only.
+* The schema lives in `prisma/schema.prisma`; migrations are in `prisma/migrations` (baseline
+  `20261026_neon_baseline`). Apply with `pnpm exec prisma migrate deploy` using the **unpooled**
+  connection string. Review the SQL of any new migration before applying it to production.
+* `prisma/migrations_postgresql` and `prisma/migrations_sqlite_legacy` are kept as history only.
+* Rotating a Neon role password changes the connection strings: update the Worker secrets and the
+  GitHub secrets together, then confirm the production Worker can still read the database.
+
+---
+
+## 4. Signing secret
+
+`IMPRINTID_CART_SIGNING_SECRET` signs the price quotes the app proxy issues and is verified inside
+both Functions. Shopify Functions cannot read environment variables, so the value is **baked into
+the wasm at build time** (`pnpm run fn:config` writes the gitignored
+`src/config.secret.generated.{ts,rs}`). The Worker, both Functions and the CI secret must hold the
+same value. Changing it means: rebuild and release a new Shopify app version, update the Worker
+secret, and update the GitHub secret. Compare values by fingerprint only (`fn:config` prints
+`sha256:` plus the first 8 hex characters); never print the secret.
+
+Generate a new value with a CSPRNG, for example `openssl rand -hex 32`. Never reuse a value that has
+appeared in git history, a chat, or a ticket.
+
+---
+
+## 5. Releasing Functions and app configuration
+
+Create a version without releasing it, inspect it, then release it deliberately:
+
+```bash
+pnpm run fn:config
+shopify app deploy --config production --no-release --message "<what changed>"
+shopify app versions list --config production --json
+shopify app release --config production --version=<version-tag> --allow-updates
+```
+
+Rollback is releasing the previous version tag with the same release command.
+
+Enforcement is controlled per shop by the `$app:imprintid/enforcement_policy` metafield (modes
+`disabled`, `pilot`, `universal`, `maintenance`). In `pilot`, only products whose
+`$app:imprintid/pricing_policy` has `required: true` and `active: true` are enforced; products with
+`active: false` are blocked at checkout. Change the mode deliberately and one step at a time.
+
+---
+
+## 6. Seeding catalog data (pricing profiles and product links)
+
+The storefront prices a product only when **three things agree**: the pricing profile exists in
 the production database, a `ProductPricingOverride` row links the Shopify product to it, and the
-product's `$app:imprintid/pricing_policy` metafield carries that profile's **id and revision**.
-Profile ids are generated per database, and the revision bumps whenever a re-import changes
-pricing, so seeding a different database (or re-importing) leaves the metafields stale until they
-are re-synced. Until all three match, quotes fail validation.
+product's `$app:imprintid/pricing_policy` metafield carries that profile's id and revision.
+Profile ids are generated per database and the revision bumps when a re-import changes pricing, so
+re-importing leaves the metafields stale until they are re-synced. Until all three match, quotes
+fail validation.
 
-Run these from your machine against the **production** database (use the database's *external*
-connection string). The Prisma client must be generated for PostgreSQL first:
+Run these from a trusted machine with `DATABASE_URL` pointing at the target database (use the
+direct connection string; never paste it into chat or a ticket):
 
 ```bash
-export DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME"   # PowerShell: $env:DATABASE_URL = "..."
-npm run prisma:generate:pg
+pnpm exec prisma generate
 
 # 1. Load the pricing profiles (idempotent; safe to re-run)
-npm run catalog:import -- "path/to/imprintid_catalog_shopify_import_updated.csv" --shop imprintid-pricing-dev.myshopify.com
+pnpm run catalog:import -- "path/to/imprintid_catalog_shopify_import_updated.csv" --shop imprintid-pricing-dev.myshopify.com
 
-# 2. Open the ImprintID app once in Shopify admin so the app server refreshes its Admin session,
-#    then check how the store and the database compare (read-only, exits 1 if anything differs)
-npm run catalog:link -- --check
+# 2. Open the ImprintID app once in Shopify admin so its Admin session is fresh, then compare the
+#    store and the database (read-only, exits 1 if anything differs)
+pnpm run catalog:link -- --check
 
 # 3. Link products and write/refresh the policy metafields (skips ones already correct)
-npm run catalog:link
+pnpm run catalog:link
 
 # 4. Confirm
-npm run catalog:link -- --check     # should print "In sync."
+pnpm run catalog:link -- --check     # should print "In sync."
 ```
 
-Run step 2-4 again after **any** pricing re-import. Afterwards, switch the local client back with
-`npx prisma generate` (SQLite).
+Repeat steps 2-4 after any pricing re-import. For bulk policy changes prefer the guarded
+plan/apply/rollback scripts (`scripts/stamp-readiness.mjs`, `scripts/pilot-scope.mjs`): they write
+a manifest before changing anything and can roll back.
 
 ---
 
-## 4. Production Web Service Hosting
+## 7. Shopify app proxy and URLs
 
-### Option A: Railway / Render / Fly.io (Recommended)
-1. Link your GitHub repository `https://github.com/redwan2003-bot/Shopify-Pricing-App`.
-2. Add a PostgreSQL database service.
-3. Configure the environment variables in your hosting dashboard:
-   - `SHOPIFY_APP_URL=https://pricing.yourdomain.com`
-   - `SHOPIFY_API_KEY=ff2a27051df6abf548cc227e021e97a4`
-   - `SHOPIFY_API_SECRET=<your-secret>`
-   - `SCOPES=write_products,write_cart_transforms,write_validations`
-   - `DATABASE_URL=${{Postgres.DATABASE_URL}}`
-   - `IMPRINTID_CART_SIGNING_SECRET=<signing-secret>`
-   - `IMPRINTID_ADJUSTMENT_VARIANT_ID=gid://shopify/ProductVariant/49349058199691`
-   - `IMPRINTID_CART_ENVELOPE_VERSION=2`
+`shopify.app.production.toml` must use the Worker origin:
 
-### Option B: Docker Compose (VPS / AWS EC2 / DigitalOcean)
-Copy [`docker-compose.prod.yml`](file:///C:/Users/reahs/Documents/imprintid-shopify-pricing/docker-compose.prod.yml) and `.env.production` to your server:
-```bash
-docker compose -f docker-compose.prod.yml up -d --build
+```toml
+application_url = "https://shopify-pricing-app.pdbd-primeit.workers.dev"
+
+[auth]
+redirect_urls = [
+  "https://shopify-pricing-app.pdbd-primeit.workers.dev/auth/callback",
+  "https://shopify-pricing-app.pdbd-primeit.workers.dev/auth/shopify/callback",
+]
+
+[app_proxy]
+url = "https://shopify-pricing-app.pdbd-primeit.workers.dev/apps/imprintid-pricing"
+subpath = "imprintid-pricing"
+prefix = "apps"
 ```
-The included [`docker-entrypoint.sh`](file:///C:/Users/reahs/Documents/imprintid-shopify-pricing/docker-entrypoint.sh) automatically detects PostgreSQL, runs schema push/migrations, and launches the server.
 
----
-
-## 5. Shopify App Proxy Configuration
-
-Once the web service is deployed to a public HTTPS domain:
-1. Update `application_url` in [`shopify.app.production.toml`](file:///C:/Users/reahs/Documents/imprintid-shopify-pricing/shopify.app.production.toml):
-   ```toml
-   application_url = "https://pricing.yourdomain.com"
-   ```
-2. Verify redirect and proxy URLs:
-   ```toml
-   [auth]
-   redirect_urls = [ "https://pricing.yourdomain.com/api/auth" ]
-
-   [app_proxy]
-   url = "https://pricing.yourdomain.com/apps/imprintid-pricing"
-   subpath = "imprintid-pricing"
-   prefix = "apps"
-   ```
-3. Push the configuration to Shopify:
-   ```bash
-   shopify app deploy --config shopify.app.production.toml --allow-updates
-   ```
+Push configuration changes through a Shopify app version (section 5), not by editing the Partner
+Dashboard by hand.
