@@ -129,6 +129,32 @@ fn the_logged_lny01_cart_expands_the_current_quote_into_exactly_one_line_expand(
     assert_eq!(setup.merchandise_id, ADJUSTMENT_VARIANT);
     assert_eq!((base.quantity, setup.quantity), (1, 1));
 
+    let attributes = base
+        .attributes
+        .as_ref()
+        .expect("the base component preserves the signed quote envelope");
+    let attributes = attributes
+        .iter()
+        .map(|attribute| (attribute.key.as_str(), attribute.value.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(attributes.get("_imprintid_pricing_version"), Some(&"2"));
+    assert_eq!(
+        attributes.get("_imprintid_pricing_payload"),
+        current["payload"]["value"].as_str().as_ref()
+    );
+    assert_eq!(
+        attributes.get("_imprintid_pricing_signature"),
+        current["signature"]["value"].as_str().as_ref()
+    );
+    assert_eq!(
+        attributes.get("_imprintid_pricing_config"),
+        current["config"]["value"].as_str().as_ref()
+    );
+    assert!(
+        setup.attributes.is_none(),
+        "the adjustment component must not create a duplicate order configuration"
+    );
+
     // Per cart-line unit: $1.37 for the product and $0.36 for the one-time $36.00 setup
     // charge spread over the 100 units. Shopify multiplies by the line quantity (100).
     assert_eq!((cents_of(base), cents_of(setup)), (137, 36));

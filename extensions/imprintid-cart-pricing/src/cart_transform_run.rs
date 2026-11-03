@@ -186,6 +186,9 @@ fn run(
         let Some(signature) = line.signature().and_then(|a| a.value()) else {
             continue;
         };
+        let Some(config) = line.config().and_then(|a| a.value()) else {
+            continue;
+        };
         if version != "2" {
             continue;
         }
@@ -219,13 +222,35 @@ fn run(
                 },
             ),
         };
+        // A lineExpand replaces the parent cart line with component order lines. Shopify does
+        // not copy the parent's private line attributes automatically, so preserve the verified
+        // quote envelope on the base product component. The orders/create webhook uses these
+        // attributes to persist the merchant's configuration and signed pricing evidence.
+        let quote_attributes = vec![
+            schema::AttributeOutput {
+                key: "_imprintid_pricing_version".into(),
+                value: version.to_string(),
+            },
+            schema::AttributeOutput {
+                key: "_imprintid_pricing_payload".into(),
+                value: raw_payload.to_string(),
+            },
+            schema::AttributeOutput {
+                key: "_imprintid_pricing_signature".into(),
+                value: signature.to_string(),
+            },
+            schema::AttributeOutput {
+                key: "_imprintid_pricing_config".into(),
+                value: config.to_string(),
+            },
+        ];
         // Expanded quantities are per parent bundle unit; Shopify multiplies
         // each component quantity by the parent cart-line quantity.
         let mut expanded = vec![schema::ExpandedItem {
             merchandise_id: quote.variant_gid,
             quantity: 1,
             price: Some(price(quote.base_unit_price_cents)),
-            attributes: None,
+            attributes: Some(quote_attributes),
         }];
         let surcharge_total = quote
             .per_unit_surcharge_cents
