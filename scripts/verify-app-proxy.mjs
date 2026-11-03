@@ -15,11 +15,73 @@ process.env.SCOPES ??= "write_products";
 process.env.SHOPIFY_APP_URL ??= "https://example.com";
 
 const { PrismaClient } = await import("@prisma/client");
-const { importPricingProfile } = await import("../app/lib/pricing-import/import.ts");
+const { PrismaNeon } = await import("@prisma/adapter-neon");
+const { importPricingProfile } =
+  await import("../app/lib/pricing-import/import.ts");
 const { buildLny01PricingInput } = await import("../prisma/seed-data/lny01.ts");
 
-const prisma = new PrismaClient();
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is required for the app-proxy verification");
+}
+
+const prisma = new PrismaClient({
+  adapter: new PrismaNeon({ connectionString: process.env.DATABASE_URL }),
+});
 const SHOP = `app-proxy-verify-${process.pid}.myshopify.com`;
+const PRODUCT_ID = "9000000000001";
+const VARIANT_ID = "9000000000002";
+
+// The public App Proxy now verifies product/variant ownership through Admin GraphQL
+// before loading pricing. Keep this verifier isolated from a real Shopify store by
+// answering only those two read-only queries for its disposable shop.
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async (input, init) => {
+  const url = new URL(
+    typeof input === "string" || input instanceof URL ? input : input.url,
+  );
+  if (url.hostname === SHOP && url.pathname.includes("/admin/api/")) {
+    const requestBody =
+      typeof init?.body === "string" ? JSON.parse(init.body) : {};
+    const query = String(requestBody.query ?? "");
+    if (query.includes("ImprintIdResolveVariant")) {
+      return Response.json({
+        data: {
+          productVariant: {
+            id: `gid://shopify/ProductVariant/${VARIANT_ID}`,
+            availableForSale: true,
+            product: { id: `gid://shopify/Product/${PRODUCT_ID}` },
+          },
+        },
+      });
+    }
+    if (query.includes("ImprintIdCartEnforcementPolicy")) {
+      return Response.json({
+        data: {
+          shop: {
+            currencyCode: "USD",
+            metafield: {
+              jsonValue: {
+                schema: 1,
+                mode: "pilot",
+                enabled: false,
+                adjustmentVariantGid:
+                  "gid://shopify/ProductVariant/9000000000003",
+                installBinding: "app-proxy-verifier",
+                policyRevision: 1,
+              },
+            },
+          },
+          product: { metafield: null },
+        },
+      });
+    }
+    return Response.json(
+      { errors: [{ message: "Unexpected verifier query" }] },
+      { status: 400 },
+    );
+  }
+  return originalFetch(input, init);
+};
 
 function signAppProxyQuery(params) {
   const entries = Object.entries(params).sort(([a], [b]) => a.localeCompare(b));
@@ -32,7 +94,11 @@ function signAppProxyQuery(params) {
 }
 
 function buildProxyUrl(pathname, extraParams = {}) {
-  const params = { shop: SHOP, timestamp: String(Math.trunc(Date.now() / 1000)), ...extraParams };
+  const params = {
+    shop: SHOP,
+    timestamp: String(Math.trunc(Date.now() / 1000)),
+    ...extraParams,
+  };
   const signature = signAppProxyQuery(params);
   const qs = new URLSearchParams({ ...params, signature }).toString();
   return `https://example.com${pathname}?${qs}`;
@@ -68,7 +134,8 @@ try {
     },
   });
 
-  const { action, loader } = await import("../app/routes/apps.imprintid-pricing.pricing.tsx");
+  const { action, loader } =
+    await import("../app/routes/apps.imprintid-pricing.pricing.tsx");
 
   // --- Case A: minimal valid request, genuinely HMAC-signed -----------------------
   {
@@ -76,7 +143,12 @@ try {
     const request = new Request(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sku: "LNY01", quantity: 1000 }),
+      body: JSON.stringify({
+        sku: "LNY01",
+        quantity: 1000,
+        shopifyProductId: PRODUCT_ID,
+        shopifyVariantId: VARIANT_ID,
+      }),
     });
     const response = await action({ request, params: {}, context: {} });
     const body = await response.json();
@@ -84,7 +156,10 @@ try {
     console.log(JSON.stringify(body, null, 2));
     check("Case A status is 200", response.status === 200);
     check("Case A ok:true", body.ok === true);
-    check("Case A no `source` field (storefront trimming)", body.ok === true && !("source" in body.data));
+    check(
+      "Case A no `source` field (storefront trimming)",
+      body.ok === true && !("source" in body.data),
+    );
     // quantity 1000 selects the 1000-tier (164 list / 98 net), per the real seeded
     // LNY01 quantity tiers in prisma/seed-data/lny01.ts.
     check(
@@ -101,7 +176,11 @@ try {
   // to render real option/production choices before any price is calculated -------
   let cellPhoneLoopId;
   {
-    const url = buildProxyUrl("/apps/imprintid-pricing/pricing", { sku: "LNY01" });
+    const url = buildProxyUrl("/apps/imprintid-pricing/pricing", {
+      sku: "LNY01",
+      shopifyProductId: PRODUCT_ID,
+      shopifyVariantId: VARIANT_ID,
+    });
     const request = new Request(url, { method: "GET" });
     const response = await loader({ request, params: {}, context: {} });
     const body = await response.json();
@@ -119,13 +198,18 @@ try {
     check(
       "Case E has both real production rules (STANDARD, RUSH)",
       body.ok === true &&
-        body.data.productionRules.map((r) => r.code).sort().join(",") === "RUSH,STANDARD",
+        body.data.productionRules
+          .map((r) => r.code)
+          .sort()
+          .join(",") === "RUSH,STANDARD",
     );
 
     const featuresGroup = body.ok
       ? body.data.optionGroups.find((g) => g.name === "Optional Features")
       : undefined;
-    const cellPhoneLoop = featuresGroup?.values.find((v) => v.label === "Cell Phone Loop");
+    const cellPhoneLoop = featuresGroup?.values.find(
+      (v) => v.label === "Cell Phone Loop",
+    );
     check(
       "Case E exposes a real OptionValue.id for Cell Phone Loop, with its real price",
       !!cellPhoneLoop && cellPhoneLoop.priceAdjustmentCents === 25,
@@ -138,7 +222,8 @@ try {
       : undefined;
     check(
       "Case E: OptionGroup.kind distinguishes Attachment from Feature groups",
-      attachmentGroup?.kind === "ATTACHMENT" && featuresGroup?.kind === "FEATURE",
+      attachmentGroup?.kind === "ATTACHMENT" &&
+        featuresGroup?.kind === "FEATURE",
     );
     check(
       "Case E: LNY01 exposes its three stock colors (Black/Red/Blue), each Included ($0)",
@@ -165,6 +250,8 @@ try {
       body: JSON.stringify({
         sku: "LNY01",
         quantity: 1000,
+        shopifyProductId: PRODUCT_ID,
+        shopifyVariantId: VARIANT_ID,
         decoration: {
           method: "SCREEN_PRINT",
           colors: 2,
@@ -173,7 +260,9 @@ try {
           differentReverseArtwork: true,
           repeatOrder: true,
         },
-        options: [{ groupName: "Optional Features", optionValueId: cellPhoneLoopId }],
+        options: [
+          { groupName: "Optional Features", optionValueId: cellPhoneLoopId },
+        ],
         production: { code: "RUSH" },
       }),
     });
@@ -217,7 +306,11 @@ try {
         throw err;
       }
     }
-    console.log("\n[Case C] forged signature -> status", status, rejected ? "(thrown Response)" : "(returned Response)");
+    console.log(
+      "\n[Case C] forged signature -> status",
+      status,
+      rejected ? "(thrown Response)" : "(returned Response)",
+    );
     check("Case C is rejected (not a 200 with real pricing)", status !== 200);
   }
 
@@ -231,40 +324,100 @@ try {
       shopDomain: SHOP,
       sku: "SAGE-DEMO",
       name: "Sage-style demo product",
-      quantityTiers: [{ minQuantity: 100, listPriceCents: 500, netPriceCents: 400, priceCode: "A" }],
+      quantityTiers: [
+        {
+          minQuantity: 100,
+          listPriceCents: 500,
+          netPriceCents: 400,
+          priceCode: "A",
+        },
+      ],
       decorationRules: [
-        { code: "SETUP_1C1L", name: "Setup", method: "SCREEN_PRINT", chargeBasis: "ONE_TIME", listPriceCents: 1000, netPriceCents: 800 },
+        {
+          code: "SETUP_1C1L",
+          name: "Setup",
+          method: "SCREEN_PRINT",
+          chargeBasis: "ONE_TIME",
+          listPriceCents: 1000,
+          netPriceCents: 800,
+        },
       ],
       decorationColorCharges: [
-        { method: "SCREEN_PRINT", colorNumber: 2, chargeBasis: "ONE_TIME", listPriceCents: 300, netPriceCents: 250, priceCode: "B" },
-        { method: "SCREEN_PRINT", colorNumber: 2, chargeBasis: "PER_UNIT", listPriceCents: 10, netPriceCents: 8 },
-        { method: "SCREEN_PRINT", colorNumber: 3, chargeBasis: "ONE_TIME", listPriceCents: 350, netPriceCents: 280 },
-        { method: "SCREEN_PRINT", colorNumber: 3, chargeBasis: "PER_UNIT", listPriceCents: 12, netPriceCents: 10 },
+        {
+          method: "SCREEN_PRINT",
+          colorNumber: 2,
+          chargeBasis: "ONE_TIME",
+          listPriceCents: 300,
+          netPriceCents: 250,
+          priceCode: "B",
+        },
+        {
+          method: "SCREEN_PRINT",
+          colorNumber: 2,
+          chargeBasis: "PER_UNIT",
+          listPriceCents: 10,
+          netPriceCents: 8,
+        },
+        {
+          method: "SCREEN_PRINT",
+          colorNumber: 3,
+          chargeBasis: "ONE_TIME",
+          listPriceCents: 350,
+          netPriceCents: 280,
+        },
+        {
+          method: "SCREEN_PRINT",
+          colorNumber: 3,
+          chargeBasis: "PER_UNIT",
+          listPriceCents: 12,
+          netPriceCents: 10,
+        },
       ],
       productColors: [
-        { code: "ROYAL", name: "Royal Blue", priceCode: "P2", priceAdjustmentCents: 15 },
+        {
+          code: "ROYAL",
+          name: "Royal Blue",
+          priceCode: "P2",
+          priceAdjustmentCents: 15,
+        },
         { code: "BLACK", name: "Black", priceAdjustmentCents: null },
       ],
       optionGroups: [],
-      productionRules: [{ code: "STANDARD", name: "Standard", minBusinessDays: 5 }],
+      productionRules: [
+        { code: "STANDARD", name: "Standard", minBusinessDays: 5 },
+      ],
       packagingRules: [{ code: "CARTON", name: "Carton" }],
     });
 
-    const catalogUrl = buildProxyUrl("/apps/imprintid-pricing/pricing", { sku: "SAGE-DEMO" });
-    const catalogResponse = await loader({ request: new Request(catalogUrl, { method: "GET" }), params: {}, context: {} });
+    const catalogUrl = buildProxyUrl("/apps/imprintid-pricing/pricing", {
+      sku: "SAGE-DEMO",
+      shopifyProductId: PRODUCT_ID,
+      shopifyVariantId: VARIANT_ID,
+    });
+    const catalogResponse = await loader({
+      request: new Request(catalogUrl, { method: "GET" }),
+      params: {},
+      context: {},
+    });
     const catalogBody = await catalogResponse.json();
-    console.log("\n[Case F] GET catalog for synthetic SAGE-DEMO product -> status", catalogResponse.status);
+    console.log(
+      "\n[Case F] GET catalog for synthetic SAGE-DEMO product -> status",
+      catalogResponse.status,
+    );
     check("Case F catalog status is 200", catalogResponse.status === 200);
     check(
       "Case F catalog exposes both product colors with real price codes",
       catalogBody.ok === true &&
         catalogBody.data.productColors.length === 2 &&
-        catalogBody.data.productColors.find((c) => c.code === "ROYAL")?.priceCode === "P2",
+        catalogBody.data.productColors.find((c) => c.code === "ROYAL")
+          ?.priceCode === "P2",
     );
     check(
       "Case F catalog exposes color 2 AND color 3 decoration pricing separately",
       catalogBody.ok === true &&
-        new Set(catalogBody.data.decorationColorCharges.map((c) => c.colorNumber)).size === 2,
+        new Set(
+          catalogBody.data.decorationColorCharges.map((c) => c.colorNumber),
+        ).size === 2,
     );
 
     const calcUrl = buildProxyUrl("/apps/imprintid-pricing/pricing");
@@ -274,6 +427,8 @@ try {
       body: JSON.stringify({
         sku: "SAGE-DEMO",
         quantity: 100,
+        shopifyProductId: PRODUCT_ID,
+        shopifyVariantId: VARIANT_ID,
         productColor: { code: "ROYAL" },
         decoration: {
           method: "SCREEN_PRINT",
@@ -285,20 +440,48 @@ try {
         },
       }),
     });
-    const calcResponse = await action({ request: calcRequest, params: {}, context: {} });
+    const calcResponse = await action({
+      request: calcRequest,
+      params: {},
+      context: {},
+    });
     const calcBody = await calcResponse.json();
-    console.log("[Case F] POST calculate (3 colors + Royal Blue) -> status", calcResponse.status);
-    console.log(JSON.stringify(calcBody.ok ? { productColor: calcBody.data.productColor, decoration: calcBody.data.decoration.charges.map((c) => c.code), totals: calcBody.data.totals } : calcBody, null, 2));
+    console.log(
+      "[Case F] POST calculate (3 colors + Royal Blue) -> status",
+      calcResponse.status,
+    );
+    console.log(
+      JSON.stringify(
+        calcBody.ok
+          ? {
+              productColor: calcBody.data.productColor,
+              decoration: calcBody.data.decoration.charges.map((c) => c.code),
+              totals: calcBody.data.totals,
+            }
+          : calcBody,
+        null,
+        2,
+      ),
+    );
     check("Case F calculation status is 200", calcResponse.status === 200);
     check(
       "Case F applies the Royal Blue color adjustment (+15)",
-      calcBody.ok === true && calcBody.data.productColor?.priceAdjustmentCents === 15,
+      calcBody.ok === true &&
+        calcBody.data.productColor?.priceAdjustmentCents === 15,
     );
-    const decorationCodes = calcBody.ok ? calcBody.data.decoration.charges.map((c) => c.code).sort() : [];
+    const decorationCodes = calcBody.ok
+      ? calcBody.data.decoration.charges.map((c) => c.code).sort()
+      : [];
     check(
       "Case F sums colors 2 AND 3 independently (not one flat additional-color fee)",
       JSON.stringify(decorationCodes) ===
-        JSON.stringify(["COLOR_2_RUN", "COLOR_2_SETUP", "COLOR_3_RUN", "COLOR_3_SETUP", "SETUP_1C1L"]),
+        JSON.stringify([
+          "COLOR_2_RUN",
+          "COLOR_2_SETUP",
+          "COLOR_3_RUN",
+          "COLOR_3_SETUP",
+          "SETUP_1C1L",
+        ]),
     );
     // base: 500*100=50000 list / 400*100=40000 net
     // decoration: setup 1000/800 + color2 300/250 + color2run 10*100=1000/8*100=800 + color3 350/280 + color3run 12*100=1200/10*100=1000
@@ -317,23 +500,37 @@ try {
   // --- Case D: a shop with no offline session must not silently succeed -----------
   {
     const unknownShop = `app-proxy-verify-no-session-${process.pid}.myshopify.com`;
-    const params = { shop: unknownShop, timestamp: String(Math.trunc(Date.now() / 1000)) };
+    const params = {
+      shop: unknownShop,
+      timestamp: String(Math.trunc(Date.now() / 1000)),
+    };
     const signature = signAppProxyQuery(params);
     const qs = new URLSearchParams({ ...params, signature }).toString();
-    const request = new Request(`https://example.com/apps/imprintid-pricing/pricing?${qs}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sku: "LNY01", quantity: 1000 }),
-    });
+    const request = new Request(
+      `https://example.com/apps/imprintid-pricing/pricing?${qs}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku: "LNY01", quantity: 1000 }),
+      },
+    );
     const response = await action({ request, params: {}, context: {} });
     const body = await response.json();
-    console.log("\n[Case D] valid signature, no installed session -> status", response.status, JSON.stringify(body));
-    check("Case D status is 404 (SHOP_NOT_AVAILABLE)", response.status === 404 && body.error?.code === "SHOP_NOT_AVAILABLE");
+    console.log(
+      "\n[Case D] valid signature, no installed session -> status",
+      response.status,
+      JSON.stringify(body),
+    );
+    check(
+      "Case D status is 404 (SHOP_NOT_AVAILABLE)",
+      response.status === 404 && body.error?.code === "SHOP_NOT_AVAILABLE",
+    );
   }
 
   console.log(`\n${passCount} passed, ${failCount} failed`);
   if (failCount > 0) process.exitCode = 1;
 } finally {
+  globalThis.fetch = originalFetch;
   await prisma.store.deleteMany({ where: { shopDomain: SHOP } });
   await prisma.session.deleteMany({ where: { shop: SHOP } });
   await prisma.$disconnect();

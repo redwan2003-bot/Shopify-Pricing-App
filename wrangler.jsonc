@@ -9,6 +9,15 @@
     "directory": "./build/client",
   },
 
+  "previews": {
+    "vars": {
+      "SHOPIFY_API_KEY": "preview_api_key",
+      "SHOPIFY_API_SECRET": "preview_shared_secret_value",
+      "SCOPES": "write_products,write_cart_transforms,write_validations,write_publications,read_orders",
+      "SHOPIFY_APP_URL": "https://example.com",
+    },
+  },
+
   "observability": {
     "enabled": true,
     "logs": {
