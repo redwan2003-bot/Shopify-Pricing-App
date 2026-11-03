@@ -36,6 +36,15 @@ class FakeShopify implements AdminGraphqlClientLike {
   domain: string;
   products: FakeProduct[];
   policies = new Map<string, { value: string; version: number }>();
+  shopPolicy = {
+    schema: 1,
+    mode: "pilot",
+    enabled: false,
+    allowLegacyV1: false,
+    adjustmentVariantGid: "gid://shopify/ProductVariant/1",
+    installBinding: "test-install",
+    policyRevision: 1,
+  };
   events: string[] = [];
   /** runs just before a metafieldsSet is applied (to simulate a concurrent change) */
   beforeSet?: (ownerIds: string[]) => void;
@@ -67,6 +76,8 @@ class FakeShopify implements AdminGraphqlClientLike {
           pageInfo: { hasNextPage: false },
         },
       };
+    } else if (query.includes("ImprintIdShopPolicyRead")) {
+      data = { shop: { metafield: { value: JSON.stringify(this.shopPolicy) } } };
     } else if (query.includes("ImprintIdPolicyRead")) {
       data = { nodes: (vars.ids as string[]).map((id) => ({ id, metafield: this.policies.has(id) ? { value: this.policies.get(id)!.value } : null })) };
     } else if (query.includes("ImprintIdProductPolicies")) {

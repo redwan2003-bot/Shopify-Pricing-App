@@ -4,7 +4,8 @@ import { adminRequest, METAFIELDS_SET_MAX, type AdminGraphqlClientLike } from ".
 import { createAdminWritePort, type PolicyRead, type PolicyWriteOutcome } from "../catalog/write-port.ts";
 import { overrideProductKey } from "../catalog/gid.ts";
 import { reconcileCoverageForProducts } from "../catalog/coverage.ts";
-import { buildLinkReport, classifyPolicy, expectedPolicyJson, type OverrideAction, type PolicyStatus } from "./link-products.ts";
+import { buildLinkReport, classifyPolicy, type LinkShopPolicyState, type OverrideAction, type PolicyStatus } from "./link-products.ts";
+import { parseProductPricingPolicy } from "../pricing-api/policy-metafields.ts";
 
 /**
  * Guarded, auditable, reversible application of the SKU auto-link.
@@ -55,6 +56,7 @@ export interface SkuLinkPlan {
   shop: string;
   storeId: string;
   resolutions: Record<string, string>;
+  shopPolicy: LinkShopPolicyState;
   entries: PlanEntry[];
   heldBack: { sku: string | null; reason: string }[];
   totals: {
@@ -154,7 +156,7 @@ export async function buildSkuLinkPlan(deps: Deps & { resolutions: Record<string
   const entries: PlanEntry[] = report.matched.map((m) => {
     const read = reads.get(m.productGid);
     const previous = { present: read?.present ?? false, jsonValue: read?.present ? read.jsonValue : null, compareDigest: read?.compareDigest ?? null };
-    const expectedPolicy = expectedPolicyJson(m);
+    const expectedPolicy = report.policyJsonByGid.get(m.productGid)!;
     const policyStatus = classifyPolicy(expectedPolicy, previous.present ? previous.jsonValue : null);
     const override = planByGid.get(m.productGid);
     const action = override?.action ?? "blocked";
@@ -195,9 +197,18 @@ export async function buildSkuLinkPlan(deps: Deps & { resolutions: Record<string
 
   const heldBack = [...report.heldBack].sort((a, b) => String(a.sku).localeCompare(String(b.sku)));
   const hash = createHash("sha256")
-    .update(stable({ shop: deps.shop, storeId: deps.storeId, resolutions: deps.resolutions, entries, heldBack }))
+    .update(stable({ shop: deps.shop, storeId: deps.storeId, resolutions: deps.resolutions, shopPolicy: report.shopPolicy, entries, heldBack }))
     .digest("hex");
-  return { shop: deps.shop, storeId: deps.storeId, resolutions: deps.resolutions, entries, heldBack, totals, hash };
+  return { shop: deps.shop, storeId: deps.storeId, resolutions: deps.resolutions, shopPolicy: report.shopPolicy, entries, heldBack, totals, hash };
+}
+
+function isEnforcedPolicy(raw: unknown): boolean {
+  let value = raw;
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { return false; }
+  }
+  const parsed = parseProductPricingPolicy(value);
+  return parsed?.active === true && parsed.required === true;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -351,6 +362,19 @@ export async function applySkuLinkPlan(
   }
   const blocked = plan.entries.filter((e) => e.overrideAction === "blocked");
   if (blocked.length) return { state: "aborted", refusedBecause: [`${blocked.length} product(s) are blocked by override-key conflicts`], policiesWritten: 0, overridesCreated: 0 };
+  if (plan.shopPolicy.enabled) {
+    const unsafe = plan.entries.filter(
+      (e) => e.willWritePolicy && isEnforcedPolicy(e.expectedPolicy) && !isEnforcedPolicy(e.previous.present ? e.previous.jsonValue : null),
+    );
+    if (unsafe.length) {
+      return {
+        state: "aborted",
+        refusedBecause: [`refusing to activate ${unsafe.length} product policy/policies while shop enforcement is enabled`],
+        policiesWritten: 0,
+        overridesCreated: 0,
+      };
+    }
+  }
 
   const manifest: Manifest = {
     version: 1,

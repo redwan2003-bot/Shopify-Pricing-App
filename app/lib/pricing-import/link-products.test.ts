@@ -2,7 +2,8 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createTestPrisma } from "../../../test/support/prisma.ts";
 import type { AdminGraphqlClientLike } from "../pricing-api/product-resolver.ts";
-import { applyLinkReport, buildLinkReport, expectedPolicyJson, summarizeLinkReport } from "./link-products.ts";
+import { buildProductPolicyValue, canonicalPolicyJson } from "../catalog/policy-value.ts";
+import { applyLinkReport, buildLinkReport, expectedPolicyJson, summarizeLinkReport, unsafeActivationExpansions } from "./link-products.ts";
 
 /**
  * SKU auto-link: bare-key overrides, a read-only preview, idempotency, legacy GID-keyed row
@@ -33,6 +34,15 @@ interface FakeProduct {
 class FakeShopify implements AdminGraphqlClientLike {
   mutations = 0;
   policies = new Map<string, string>();
+  shopPolicy = {
+    schema: 1,
+    mode: "pilot",
+    enabled: false,
+    allowLegacyV1: false,
+    adjustmentVariantGid: "gid://shopify/ProductVariant/1",
+    installBinding: "test-install",
+    policyRevision: 1,
+  };
   products: FakeProduct[];
   constructor(products: FakeProduct[]) {
     this.products = products;
@@ -50,6 +60,8 @@ class FakeShopify implements AdminGraphqlClientLike {
           pageInfo: { hasNextPage: false },
         },
       };
+    } else if (query.includes("ImprintIdShopPolicyRead")) {
+      data = { shop: { metafield: { value: JSON.stringify(this.shopPolicy) } } };
     } else if (query.includes("ImprintIdPolicyRead")) {
       data = {
         nodes: (vars.ids as string[]).map((id) => ({ id, metafield: this.policies.has(id) ? { value: this.policies.get(id) } : null })),
@@ -218,4 +230,58 @@ test("archived products are not candidates and an explicit product id resolves a
   assert.match(wrongReasons.get("LDSBR34") ?? "", /does not carry this SKU/);
   assert.match(wrongReasons.get("LDUSY") ?? "", /is archived/);
   assert.equal(wrong.matched.some((m) => m.profile.sku === "LDSBR34" || m.profile.sku === "LDUSY"), false);
+});
+
+test("an existing override resolves an ambiguous SKU to the previously approved product", async () => {
+  const { storeId, profiles } = await fixture(["AMB"]);
+  await prisma.productPricingOverride.create({ data: { storeId, shopifyProductId: "7002", pricingProfileId: profiles.AMB, isActive: true } });
+  const shop = new FakeShopify([
+    { id: 7001, title: "old AMB product", status: "ACTIVE", skus: ["AMB_Red"] },
+    { id: 7002, title: "approved AMB product", status: "ACTIVE", skus: ["AMB"] },
+  ]);
+
+  const report = await buildLinkReport(prisma, shop, storeId);
+  assert.equal(report.heldBack.length, 0);
+  assert.equal(report.matched.length, 1);
+  assert.equal(report.matched[0].productGid, gid(7002));
+  assert.equal(report.matched[0].manual, true, "the stored override is treated as an explicit prior resolution");
+});
+
+test("enabled-pilot linking preserves containment and only advances an already-enforced product to the live revision", async () => {
+  const { storeId, profiles } = await fixture(["AAA", "BBB", "CCC"]);
+  const shop = new FakeShopify([
+    { id: 7101, title: "AAA", status: "ACTIVE", skus: ["AAA"] },
+    { id: 7102, title: "BBB", status: "ACTIVE", skus: ["BBB"] },
+    { id: 7103, title: "CCC", status: "ACTIVE", skus: ["CCC"] },
+  ]);
+  shop.shopPolicy = { ...shop.shopPolicy, enabled: true, policyRevision: 13 };
+  shop.policies.set(gid(7101), canonicalPolicyJson(buildProductPolicyValue({ profileId: profiles.AAA, profileRevision: 1, policyRevision: 1, active: false })));
+  shop.policies.set(gid(7102), canonicalPolicyJson(buildProductPolicyValue({ profileId: profiles.BBB, profileRevision: 1, policyRevision: 1, active: true })));
+
+  const report = await buildLinkReport(prisma, shop, storeId);
+  assert.deepEqual(report.counts, { ok: 1, missing: 1, stale: 1, malformed: 0 });
+  assert.equal(unsafeActivationExpansions(report).length, 0);
+  assert.deepEqual(JSON.parse(report.policyJsonByGid.get(gid(7101))!), {
+    schema: 1, required: true, active: false, profileRef: profiles.AAA, profileRevision: 1, policyRevision: 1,
+  });
+  assert.equal(JSON.parse(report.policyJsonByGid.get(gid(7102))!).policyRevision, 13, "an already-enforced product follows the live shop revision");
+  assert.equal(JSON.parse(report.policyJsonByGid.get(gid(7103))!).active, false, "a missing policy cannot join an enabled pilot implicitly");
+
+  const applied = await applyLinkReport(prisma, shop, storeId, report);
+  assert.equal(applied.written, 2);
+  assert.equal(JSON.parse(shop.policies.get(gid(7103))!).active, false);
+});
+
+test("the apply guard refuses a newly-active policy while enforcement is enabled", async () => {
+  const { storeId, profiles } = await fixture(["AAA"]);
+  const shop = new FakeShopify([{ id: 7201, title: "AAA", status: "ACTIVE", skus: ["AAA"] }]);
+  shop.shopPolicy = { ...shop.shopPolicy, enabled: true, policyRevision: 13 };
+  const report = await buildLinkReport(prisma, shop, storeId);
+  const candidate = report.matched[0];
+  report.policyJsonByGid.set(candidate.productGid, canonicalPolicyJson(buildProductPolicyValue({
+    profileId: profiles.AAA, profileRevision: 1, policyRevision: 13, active: true,
+  })));
+  assert.equal(unsafeActivationExpansions(report).length, 1);
+  await assert.rejects(() => applyLinkReport(prisma, shop, storeId, report), /refusing to activate/);
+  assert.equal(shop.mutations, 0);
 });

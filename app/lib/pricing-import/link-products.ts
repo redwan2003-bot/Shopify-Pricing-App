@@ -4,6 +4,7 @@ import { buildProductPolicyValue, canonicalPolicyJson, normalizeExistingPolicyJs
 import { overrideProductKey, parseProductGid } from "../catalog/gid.ts";
 import { classifyOverrideKeyState } from "../catalog/override-key-audit.ts";
 import { reconcileCoverageForProducts, type BestEffortReconcile } from "../catalog/coverage.ts";
+import { parseProductPricingPolicy, parseShopEnforcementPolicy } from "../pricing-api/policy-metafields.ts";
 
 /**
  * Links each pricing profile to its Shopify product by SKU: a profile with sku "LDSPK" matches
@@ -79,6 +80,48 @@ export function expectedPolicyJson(m: LinkCandidate): string {
   );
 }
 
+export interface LinkShopPolicyState {
+  enabled: boolean;
+  policyRevision: number;
+  /** False means the shop policy was absent or malformed, so planning used fail-safe defaults. */
+  valid: boolean;
+}
+
+/**
+ * Build the policy a linker write is allowed to make.
+ *
+ * Existing rollout flags are operational state, not pricing-import state, so importing a new
+ * profile revision must never reset them. An already-enforced product follows the live shop
+ * revision; inactive/unrequired products keep their existing revision because they are outside
+ * the active rollout. A missing or malformed policy is fail-closed when enforcement is already
+ * enabled and can only be made ready automatically while the shop gate is disabled.
+ */
+export function plannedPolicyJson(
+  m: LinkCandidate,
+  actualRaw: unknown,
+  shopPolicy: LinkShopPolicyState,
+): string {
+  let existing: ReturnType<typeof parseProductPricingPolicy> = null;
+  const normalized = normalizeExistingPolicyJson(actualRaw);
+  if (normalized) {
+    try {
+      existing = parseProductPricingPolicy(JSON.parse(normalized));
+    } catch {
+      existing = null;
+    }
+  }
+  const enforced = existing?.active === true && existing.required === true;
+  return canonicalPolicyJson(
+    buildProductPolicyValue({
+      profileId: m.profile.id,
+      profileRevision: m.profile.revision,
+      policyRevision: enforced ? shopPolicy.policyRevision : (existing?.policyRevision ?? shopPolicy.policyRevision),
+      required: existing?.required ?? true,
+      active: existing?.active ?? !shopPolicy.enabled,
+    }),
+  );
+}
+
 // ---------------------------------------------------------------------------------------
 
 const SKU_INDEX_QUERY = `#graphql
@@ -94,6 +137,11 @@ const POLICY_READ_QUERY = `#graphql
     nodes(ids: $ids) {
       ... on Product { id metafield(namespace: "$app:imprintid", key: "pricing_policy") { value } }
     }
+  }`;
+
+const SHOP_POLICY_READ_QUERY = `#graphql
+  query ImprintIdShopPolicyRead {
+    shop { metafield(namespace: "$app:imprintid", key: "enforcement_policy") { value } }
   }`;
 
 const POLICY_WRITE = `#graphql
@@ -146,6 +194,25 @@ async function fetchExistingPolicies(admin: AdminGraphqlClientLike, gids: string
     }
   }
   return existing;
+}
+
+async function fetchShopPolicyState(admin: AdminGraphqlClientLike): Promise<LinkShopPolicyState> {
+  const data = await gql(admin, SHOP_POLICY_READ_QUERY, {});
+  const raw = (data.shop as { metafield?: { value?: unknown } | null } | undefined)?.metafield?.value;
+  let value = raw;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      value = null;
+    }
+  }
+  const parsed = parseShopEnforcementPolicy(value);
+  if (parsed) {
+    return { enabled: parsed.enabled, policyRevision: parsed.policyRevision, valid: true };
+  }
+  // If the shop gate cannot be understood, never make a newly linked product enforceable.
+  return { enabled: true, policyRevision: POLICY_REVISION, valid: false };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -239,6 +306,12 @@ export interface LinkReport {
   overridePlan: OverridePlanEntry[];
   /** matched products that will not be touched because of an override-key conflict */
   blocked: OverridePlanEntry[];
+  /** Live shop rollout gate used to derive safe product-policy writes. */
+  shopPolicy: LinkShopPolicyState;
+  /** Canonical value for each writable matched product, preserving rollout state. */
+  policyJsonByGid: Map<string, string>;
+  /** Raw policy snapshot used by the activation-expansion guard. */
+  policyBeforeByGid: Map<string, unknown>;
 }
 
 function normalizeResolutions(raw: Record<string, string> | undefined): { byKey: Map<string, string>; invalid: string[] } {
@@ -261,6 +334,18 @@ export async function buildLinkReport(
   const { index, titles, statuses } = await fetchSkuIndex(admin);
   const profiles = await prisma.pricingProfile.findMany({ where: { storeId }, select: { id: true, sku: true, revision: true } });
   const resolutions = normalizeResolutions(options.manualResolutions);
+  const savedOverrides = await prisma.productPricingOverride.findMany({
+    where: { storeId, isActive: true, pricingProfileId: { not: null } },
+    select: { shopifyProductId: true, pricingProfileId: true },
+  });
+  const savedProductsByProfile = new Map<string, Set<string>>();
+  for (const row of savedOverrides) {
+    if (!row.pricingProfileId) continue;
+    const gid = parseProductGid(row.shopifyProductId);
+    if (!gid) continue;
+    if (!savedProductsByProfile.has(row.pricingProfileId)) savedProductsByProfile.set(row.pricingProfileId, new Set());
+    savedProductsByProfile.get(row.pricingProfileId)!.add(gid);
+  }
 
   const matched: LinkCandidate[] = [];
   const heldBack: LinkReport["heldBack"] = [];
@@ -290,7 +375,13 @@ export async function buildLinkReport(
         reason: all.size > 0 ? "only archived products carry this SKU" : "no product in the store has variant SKUs starting with this SKU",
       });
     } else if (candidates.size > 1) {
-      heldBack.push({ sku: profile.sku, reason: `${candidates.size} products share this SKU prefix, so the match is ambiguous` });
+      const saved = [...candidates].filter((gid) => savedProductsByProfile.get(profile.id)?.has(gid));
+      if (saved.length === 1) {
+        const productGid = saved[0]!;
+        matched.push({ profile, productGid, title: titles.get(productGid), manual: true });
+      } else {
+        heldBack.push({ sku: profile.sku, reason: `${candidates.size} products share this SKU prefix, so the match is ambiguous` });
+      }
     } else {
       const productGid = [...candidates][0]!;
       matched.push({ profile, productGid, title: titles.get(productGid) });
@@ -303,9 +394,29 @@ export async function buildLinkReport(
   const writable = matched.filter((m) => !blockedGids.has(m.productGid));
 
   const existing = await fetchExistingPolicies(admin, writable.map((m) => m.productGid));
-  const plan = planPolicyWrites(writable, existing, expectedPolicyJson);
+  const shopPolicy = await fetchShopPolicyState(admin);
+  const policyJsonByGid = new Map(writable.map((m) => [m.productGid, plannedPolicyJson(m, existing.get(m.productGid), shopPolicy)]));
+  const plan = planPolicyWrites(writable, existing, (m) => policyJsonByGid.get(m.productGid)!);
   const overridesPresent = overridePlan.filter((e) => e.action === "unchanged" || e.legacyGidRow || e.fromProfileId !== undefined).length;
-  return { matched, heldBack, overridesPresent, overridePlan, blocked, ...plan };
+  return { matched, heldBack, overridesPresent, overridePlan, blocked, shopPolicy, policyJsonByGid, policyBeforeByGid: existing, ...plan };
+}
+
+function enforcedPolicy(raw: unknown): boolean {
+  let value = raw;
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { return false; }
+  }
+  const parsed = parseProductPricingPolicy(value);
+  return parsed?.active === true && parsed.required === true;
+}
+
+/** Defense in depth: an enabled pilot may repair an already-enforced product, never add one. */
+export function unsafeActivationExpansions(report: LinkReport): LinkCandidate[] {
+  if (!report.shopPolicy.enabled) return [];
+  return report.toWrite.filter((m) => {
+    const desired = report.policyJsonByGid.get(m.productGid);
+    return enforcedPolicy(desired) && !enforcedPolicy(report.policyBeforeByGid.get(m.productGid));
+  });
 }
 
 export async function applyLinkReport(
@@ -314,6 +425,10 @@ export async function applyLinkReport(
   storeId: string,
   report: LinkReport,
 ): Promise<{ written: number; errors: string[]; overridesCreated: number; overridesUpdated: number; coverage: BestEffortReconcile }> {
+  const unsafe = unsafeActivationExpansions(report);
+  if (unsafe.length) {
+    throw new Error(`refusing to activate ${unsafe.length} product policy/policies while shop enforcement is enabled`);
+  }
   let written = 0;
   const errors: string[] = [];
   for (let i = 0; i < report.toWrite.length; i += METAFIELD_BATCH) {
@@ -324,7 +439,7 @@ export async function applyLinkReport(
         namespace: "$app:imprintid",
         key: "pricing_policy",
         type: "json",
-        value: expectedPolicyJson(m),
+        value: report.policyJsonByGid.get(m.productGid)!,
       })),
     });
     const result = data.metafieldsSet as { metafields: unknown[]; userErrors: { message: string }[] };
