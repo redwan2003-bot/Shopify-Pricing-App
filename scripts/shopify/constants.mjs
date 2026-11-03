@@ -33,14 +33,13 @@ export const VALIDATION_HANDLE = "imprintid-cart-validation";
 export const VALIDATION_TITLE = "ImprintID Dynamic Pricing Validation";
 
 /** The development-only adjustment product the Cart Transform expands lines into. */
-export const ADJ_PRODUCT_TITLE = "DEV ONLY — ImprintID Pricing Adjustment";
-export const ADJ_PRODUCT_VENDOR = "ImprintID (dev)";
+export const ADJ_PRODUCT_TITLE = "ImprintID Pricing Adjustment (do not delete)";
+export const ADJ_PRODUCT_VENDOR = "ImprintID";
 export const ADJ_PRODUCT_TYPE = "ImprintID Pricing Adjustment";
 export const ADJ_PRODUCT_TAGS = ["imprintid-internal", "do-not-sell-directly"];
 export const ADJ_PRODUCT_DESCRIPTION_HTML =
-  "<p>Development-only. Used by the ImprintID Cart Transform Function to expand a cart " +
-  "line into base + surcharge components. Direct addition to cart is blocked by the " +
-  "ImprintID Validation Function. Do not add to collections, promote, or sell directly.</p>";
+  "<p>Used by the ImprintID Dynamic Pricing app to apply configured surcharges at checkout. " +
+  "It cannot be bought on its own. Do not delete, publish or add it to collections.</p>";
 
 /** The exact variant shape this provisioner owns and reconciles on every `--prepare`. */
 export const ADJ_VARIANT_DESIRED = Object.freeze({
@@ -54,9 +53,9 @@ export const ADJ_VARIANT_DESIRED = Object.freeze({
 /** Local pricing-profile identity for LNY01 (see `prisma` — the active LNY01
  * `PricingProfile.id`). `profileRevision` / `policyRevision` are synthetic stable dev
  * values (the local schema has no revision column). */
-export const PROFILE_REF = "cmtxfdpjh05h78zg4cjauv98d";
-export const PROFILE_REVISION = 1;
-export const POLICY_REVISION = 1;
+export const PROFILE_REF = "cmuct92s400028z0kfhqzg5e7";
+export const PROFILE_REVISION = 3;
+export const POLICY_REVISION = 13;
 
 /** A stable, opaque per-install binding for the dev pilot. */
 export const INSTALL_BINDING = "dev-imprintid-pricing-development-pilot-1";
@@ -87,11 +86,21 @@ export function productPolicyValue() {
 }
 
 /** Ordered phases. Each is strictly its own step — no phase performs a later one. */
-export const PHASES = Object.freeze(["check", "prepare", "activate", "enable-pilot", "rollback-check"]);
+export const PHASES = Object.freeze([
+  "check",
+  "prepare",
+  "activate",
+  "enable-pilot",
+  "rollback-check",
+]);
 
 /** The phases that mutate Shopify or the local `.env`. They refuse to start without a
  * confirmed authenticated-session lease (see `MUTATION_LEASE_MINUTES`). */
-export const MUTATING_PHASES = Object.freeze(["prepare", "activate", "enable-pilot"]);
+export const MUTATING_PHASES = Object.freeze([
+  "prepare",
+  "activate",
+  "enable-pilot",
+]);
 
 /** Minimum minutes of remaining offline-session validity required before a mutating
  * phase may start — long enough to finish the phase's Admin round-trips well inside the
@@ -99,9 +108,14 @@ export const MUTATING_PHASES = Object.freeze(["prepare", "activate", "enable-pil
 export const MUTATION_LEASE_MINUTES = 15;
 
 /** Monotonic phase-reached ladder recorded in the receipt. */
-export const PHASE_RANK = Object.freeze({ none: 0, prepared: 1, activated: 2, "pilot-enabled": 3 });
+export const PHASE_RANK = Object.freeze({
+  none: 0,
+  prepared: 1,
+  activated: 2,
+  "pilot-enabled": 3,
+});
 
-export const SCRIPT_VERSION = "5B.3B.2";
+export const SCRIPT_VERSION = "5B.3B.3";
 
 /** Path (relative to repo root) of the git-ignored recovery receipt. */
 export const RECEIPT_RELPATH = ".shopify/provision-receipt.json";
@@ -109,4 +123,9 @@ export const RECEIPT_RELPATH = ".shopify/provision-receipt.json";
 /** Scopes the provisioning mutations require (each `write_*` also grants the matching
  * read). Shopify does NOT list the implicit `read_*` in a token's scope string, so this
  * checks ONLY the writes. */
-export const REQUIRED_SCOPES = ["write_products", "write_cart_transforms", "write_validations", "write_publications"];
+export const REQUIRED_SCOPES = [
+  "write_products",
+  "write_cart_transforms",
+  "write_validations",
+  "write_publications",
+];

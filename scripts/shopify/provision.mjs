@@ -20,8 +20,12 @@
  * read back correctly. See `scripts/shopify/README.md`.
  */
 
-import { PrismaClient } from "@prisma/client";
-import { MUTATION_LEASE_MINUTES, PHASES, PROFILE_REF, SCRIPT_VERSION } from "./constants.mjs";
+import {
+  MUTATION_LEASE_MINUTES,
+  PHASES,
+  PROFILE_REF,
+  SCRIPT_VERSION,
+} from "./constants.mjs";
 import { leaseBlockers, sessionLeaseMinutes } from "./reconcile.mjs";
 import {
   connectAdmin,
@@ -31,6 +35,7 @@ import {
   receiptPath,
   readSecretFingerprints,
   writeSigningEnv,
+  createScriptPrismaClient,
   userErrors,
 } from "./runtime.mjs";
 import {
@@ -50,14 +55,18 @@ const log = (...a) => console.log(...a);
 
 function selectedPhase(argv) {
   const flags = PHASES.map((p) => `--${p}`).filter((f) => argv.includes(f));
-  if (flags.length > 1) throw new Error(`pick ONE phase, got: ${flags.join(", ")}`);
+  if (flags.length > 1)
+    throw new Error(`pick ONE phase, got: ${flags.join(", ")}`);
   return flags.length ? flags[0].slice(2) : "check";
 }
 
 async function profileCurrency() {
-  const prisma = new PrismaClient();
+  const prisma = createScriptPrismaClient();
   try {
-    const p = await prisma.pricingProfile.findUnique({ where: { id: PROFILE_REF }, select: { currency: true } });
+    const p = await prisma.pricingProfile.findUnique({
+      where: { id: PROFILE_REF },
+      select: { currency: true },
+    });
     return p?.currency ?? null;
   } finally {
     await prisma.$disconnect();
@@ -83,10 +92,14 @@ async function main() {
   );
 
   const receipt = readReceipt();
-  const state = await readState(gql, { profileCurrency: await profileCurrency(), receipt });
+  const state = await readState(gql, {
+    profileCurrency: await profileCurrency(),
+    receipt,
+  });
 
   // Belt-and-suspenders: refuse to operate against anything but the canonical dev app.
-  if (!state.app.apiKey) throw new Error("could not read currentAppInstallation.app — aborting.");
+  if (!state.app.apiKey)
+    throw new Error("could not read currentAppInstallation.app — aborting.");
 
   const io = {
     userErrors,
@@ -111,7 +124,8 @@ async function main() {
   const result = await runner(ctx);
 
   if (result.mutated) log(`\n(receipt updated: ${receiptPath()})`);
-  else if (phase === "check") log(`\n(no mutation, no secret generation, no receipt change)`);
+  else if (phase === "check")
+    log(`\n(no mutation, no secret generation, no receipt change)`);
 }
 
 main().catch((err) => {

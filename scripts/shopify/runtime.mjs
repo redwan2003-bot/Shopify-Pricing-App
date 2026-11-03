@@ -9,6 +9,7 @@
  */
 
 import { PrismaClient } from "@prisma/client";
+import { PrismaNeon } from "@prisma/adapter-neon";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -29,11 +30,24 @@ const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const ENV_PATH = REPO_ROOT + ".env";
 const RECEIPT_PATH = REPO_ROOT + RECEIPT_RELPATH;
 const SECRET_MODULES = [
-  REPO_ROOT + "extensions/imprintid-cart-pricing/src/config.secret.generated.ts",
-  REPO_ROOT + "extensions/imprintid-cart-validation/src/config.secret.generated.ts",
+  REPO_ROOT +
+    "extensions/imprintid-cart-pricing/src/config.secret.generated.ts",
+  REPO_ROOT +
+    "extensions/imprintid-cart-validation/src/config.secret.generated.ts",
 ];
 
-export const fp = (s) => (s && s.length ? createHash("sha256").update(s, "utf8").digest("hex").slice(0, 8) : "0".repeat(8));
+export const fp = (s) =>
+  s && s.length
+    ? createHash("sha256").update(s, "utf8").digest("hex").slice(0, 8)
+    : "0".repeat(8);
+
+/** Prisma 7's client engine always requires an explicit driver adapter. Keep the
+ * Shopify operations scripts on the same Neon transport as the deployed app. */
+export function createScriptPrismaClient() {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) throw new Error("Missing DATABASE_URL");
+  return new PrismaClient({ adapter: new PrismaNeon({ connectionString }) });
+}
 
 // ---------------------------------------------------------------------------
 // Auth + Admin GraphQL
@@ -43,7 +57,7 @@ export const fp = (s) => (s && s.length ? createHash("sha256").update(s, "utf8")
  * returns an authenticated `gql(query, variables)`. Throws (never returns) on a missing
  * session or a missing required scope. The token is never returned or logged. */
 export async function connectAdmin() {
-  const prisma = new PrismaClient();
+  const prisma = createScriptPrismaClient();
   const session = await prisma.session.findUnique({
     where: { id: `offline_${DEV_STORE}` },
     select: { accessToken: true, scope: true, expires: true },
@@ -51,9 +65,16 @@ export async function connectAdmin() {
   await prisma.$disconnect();
 
   if (!session || !session.accessToken) {
-    throw new Error(`no offline Admin session for the ImprintID app on ${DEV_STORE} — open the app in Shopify admin to authorize.`);
+    throw new Error(
+      `no offline Admin session for the ImprintID app on ${DEV_STORE} — open the app in Shopify admin to authorize.`,
+    );
   }
-  const have = new Set((session.scope || "").split(",").map((s) => s.trim()).filter(Boolean));
+  const have = new Set(
+    (session.scope || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
   const missing = REQUIRED_SCOPES.filter((s) => !have.has(s));
   if (missing.length) {
     throw new Error(
@@ -64,14 +85,24 @@ export async function connectAdmin() {
   const token = session.accessToken;
 
   async function gql(query, variables = {}) {
-    const res = await fetch(`https://${DEV_STORE}/admin/api/${API_VERSION}/graphql.json`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
-      body: JSON.stringify({ query, variables }),
-    });
+    const res = await fetch(
+      `https://${DEV_STORE}/admin/api/${API_VERSION}/graphql.json`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": token,
+        },
+        body: JSON.stringify({ query, variables }),
+      },
+    );
     const body = await res.json().catch(() => ({}));
-    if (res.status === 401 || res.status === 403) throw new Error(`Admin API auth failed (${res.status}) — token stale; reauthorize.`);
-    if (body.errors) throw new Error(`GraphQL errors: ${JSON.stringify(body.errors)}`);
+    if (res.status === 401 || res.status === 403)
+      throw new Error(
+        `Admin API auth failed (${res.status}) — token stale; reauthorize.`,
+      );
+    if (body.errors)
+      throw new Error(`GraphQL errors: ${JSON.stringify(body.errors)}`);
     return body.data;
   }
 
@@ -111,7 +142,10 @@ const STATE_QUERY = `
  * function consumes. Also folds in the local receipt + local profile currency so the
  * pure layer stays IO-free. `profileCurrency` comes from the caller (Prisma).
  */
-export async function readState(gql, { profileCurrency = null, receipt = null } = {}) {
+export async function readState(
+  gql,
+  { profileCurrency = null, receipt = null } = {},
+) {
   const data = await gql(STATE_QUERY, {
     pid: LNY01_PRODUCT_GID,
     adjQuery: `title:'${ADJ_PRODUCT_TITLE}'`,
@@ -128,7 +162,10 @@ export async function readState(gql, { profileCurrency = null, receipt = null } 
       price: v.price,
       inventoryPolicy: v.inventoryPolicy,
       taxable: v.taxable,
-      inventoryItem: { tracked: v.inventoryItem?.tracked ?? null, requiresShipping: v.inventoryItem?.requiresShipping ?? null },
+      inventoryItem: {
+        tracked: v.inventoryItem?.tracked ?? null,
+        requiresShipping: v.inventoryItem?.requiresShipping ?? null,
+      },
     })),
   }));
 
@@ -144,14 +181,32 @@ export async function readState(gql, { profileCurrency = null, receipt = null } 
     receipt,
     shopPolicyJson: data.shopPolicy?.metafield?.jsonValue ?? null,
     shopPolicyMetafieldId: data.shopPolicy?.metafield?.id ?? null,
-    lny01: { id: data.lny01?.id ?? null, title: data.lny01?.title ?? null, status: data.lny01?.status ?? null },
+    lny01: {
+      id: data.lny01?.id ?? null,
+      title: data.lny01?.title ?? null,
+      status: data.lny01?.status ?? null,
+    },
     lny01PolicyJson: data.lny01?.metafield?.jsonValue ?? null,
     lny01PolicyMetafieldId: data.lny01?.metafield?.id ?? null,
     shopPolicyDefinitionId: data.shopDef?.nodes?.[0]?.id ?? null,
     productPolicyDefinitionId: data.prodDef?.nodes?.[0]?.id ?? null,
-    functions: (data.shopifyFunctions?.nodes || []).map((f) => ({ id: f.id, title: f.title, apiType: f.apiType, app: f.app?.title ?? null })),
-    cartTransforms: (data.cartTransforms?.nodes || []).map((t) => ({ id: t.id, functionId: t.functionId, blockOnFailure: t.blockOnFailure })),
-    validations: (data.validations?.nodes || []).map((v) => ({ id: v.id, title: v.title, enabled: v.enabled, blockOnFailure: v.blockOnFailure })),
+    functions: (data.shopifyFunctions?.nodes || []).map((f) => ({
+      id: f.id,
+      title: f.title,
+      apiType: f.apiType,
+      app: f.app?.title ?? null,
+    })),
+    cartTransforms: (data.cartTransforms?.nodes || []).map((t) => ({
+      id: t.id,
+      functionId: t.functionId,
+      blockOnFailure: t.blockOnFailure,
+    })),
+    validations: (data.validations?.nodes || []).map((v) => ({
+      id: v.id,
+      title: v.title,
+      enabled: v.enabled,
+      blockOnFailure: v.blockOnFailure,
+    })),
     adjustmentProductMatches: adjMatches,
   };
 }
@@ -179,10 +234,16 @@ export function readSecretFingerprints() {
   const appSecret = envVar(readEnv(), "IMPRINTID_CART_SIGNING_SECRET") || "";
   const fns = SECRET_MODULES.map((path) => {
     if (!existsSync(path)) return "";
-    const m = readFileSync(path, "utf8").match(/CART_SIGNING_SECRET\s*=\s*"([^"]*)"/);
+    const m = readFileSync(path, "utf8").match(
+      /CART_SIGNING_SECRET\s*=\s*"([^"]*)"/,
+    );
     return m ? m[1] : "";
   });
-  return { appServer: fp(appSecret), transform: fp(fns[0]), validation: fp(fns[1]) };
+  return {
+    appServer: fp(appSecret),
+    transform: fp(fns[0]),
+    validation: fp(fns[1]),
+  };
 }
 
 /**
@@ -193,10 +254,16 @@ export function readSecretFingerprints() {
 export function writeSigningEnv(adjustmentVariantGid) {
   let env = readEnv();
   let secret = envVar(env, "IMPRINTID_CART_SIGNING_SECRET");
-  if (!secret || secret.trim().length === 0) secret = randomBytes(40).toString("base64url"); // 54 chars > 32 random bytes
+  if (!secret || secret.trim().length === 0)
+    secret = randomBytes(40).toString("base64url"); // 54 chars > 32 random bytes
   env = setEnvVar(env, "IMPRINTID_CART_ENVELOPE_VERSION", "2");
   env = setEnvVar(env, "IMPRINTID_CART_SIGNING_SECRET", secret);
-  if (adjustmentVariantGid) env = setEnvVar(env, "IMPRINTID_ADJUSTMENT_VARIANT_ID", adjustmentVariantGid);
+  if (adjustmentVariantGid)
+    env = setEnvVar(
+      env,
+      "IMPRINTID_ADJUSTMENT_VARIANT_ID",
+      adjustmentVariantGid,
+    );
   writeFileSync(ENV_PATH, env, "utf8");
   return fp(secret);
 }
@@ -224,12 +291,22 @@ export function writeReceipt(patch) {
   const prev = readReceipt() || {};
   const next = {
     schema: 1,
-    scriptVersion: (patch && patch.scriptVersion) || prev.scriptVersion || "5B.3B.2",
+    scriptVersion:
+      (patch && patch.scriptVersion) || prev.scriptVersion || "5B.3B.2",
     ...prev,
     ...patch,
-    resources: { ...(prev.resources || {}), ...((patch && patch.resources) || {}) },
-    policyState: { ...(prev.policyState || {}), ...((patch && patch.policyState) || {}) },
-    currency: { ...(prev.currency || {}), ...((patch && patch.currency) || {}) },
+    resources: {
+      ...(prev.resources || {}),
+      ...((patch && patch.resources) || {}),
+    },
+    policyState: {
+      ...(prev.policyState || {}),
+      ...((patch && patch.policyState) || {}),
+    },
+    currency: {
+      ...(prev.currency || {}),
+      ...((patch && patch.currency) || {}),
+    },
     updatedAt: new Date().toISOString(),
   };
   const history = Array.isArray(prev.history) ? [...prev.history] : [];
