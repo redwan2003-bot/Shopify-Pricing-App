@@ -4,6 +4,10 @@ ImprintID Dynamic Pricing runs on **Cloudflare Workers** with a **Neon PostgreSQ
 Shopify Functions (Cart Transform and Validation, both Rust) and the app configuration are
 released through Shopify app versions. There is no container, Docker image or other host.
 
+The app is owner-operated and non-billed; it has no subscription gate. For release order,
+post-release checks, rollback, secret rotation, and incident handling, use
+[`PRODUCTION_OPERATIONS.md`](PRODUCTION_OPERATIONS.md).
+
 ```
 GitHub (main) --CI--> tests + Rust Function builds --> Shopify app version (extensions + config)
 Operator ------------> pnpm run build && pnpm exec wrangler deploy --> Cloudflare Worker
@@ -42,9 +46,11 @@ automatically, so treat a merge to `main` as a release of the Functions and app 
 Set with `pnpm exec wrangler secret put <NAME>` (or `wrangler secret bulk`). Values are never
 stored in git; `.env.production.example` lists names with placeholders only.
 
-`DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES`,
-`SHOPIFY_APP_URL`, `IMPRINTID_CART_SIGNING_SECRET`, plus the R2 variables if artwork upload is
-used. `IMPRINTID_ADJUSTMENT_VARIANT_ID` is optional (single-store pinning only).
+The current production Worker has `DATABASE_URL`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`,
+`SCOPES`, `SHOPIFY_APP_URL`, `IMPRINTID_CART_SIGNING_SECRET`,
+`IMPRINTID_CART_ENVELOPE_VERSION`, and `IMPRINTID_ADJUSTMENT_VARIANT_ID`. The unpooled Neon URL is
+an operator/CI migration credential, not a runtime Worker secret. R2 credentials are required only
+if the currently disabled Order Workflows/artwork-upload feature is deliberately enabled.
 
 Deploy the Worker (preview first, then production):
 

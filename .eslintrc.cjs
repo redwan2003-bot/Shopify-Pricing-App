@@ -25,6 +25,16 @@ module.exports = {
   extends: ["eslint:recommended"],
 
   overrides: [
+    // Cloudflare's React Router Worker entry imports a Vite-provided virtual module. It is
+    // resolved during the production build, so the Node import resolver must ignore only this
+    // virtual-module namespace.
+    {
+      files: ["workers/app.ts"],
+      rules: {
+        "import/no-unresolved": ["error", { ignore: ["^virtual:"] }],
+      },
+    },
+
     // React
     {
       files: ["**/*.{js,jsx,ts,tsx}"],

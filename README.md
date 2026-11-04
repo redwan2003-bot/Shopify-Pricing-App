@@ -82,8 +82,8 @@ For more information on the Shopify Dev MCP please read [the documentation](http
 This template uses [Prisma](https://www.prisma.io/) to store session data, by default using an [SQLite](https://www.sqlite.org/index.html) database.
 The database is defined as a Prisma schema in `prisma/schema.prisma`.
 
-This use of SQLite works in production if your app runs as a single instance.
-The database that works best for you depends on the data your app needs and how it is queried.
+The upstream template can use SQLite for local development, but this app's production database is
+Neon PostgreSQL. Do not use SQLite for a production deployment of this app.
 Here’s a short list of databases providers that provide a free tier to get started:
 
 | Database   | Type             | Hosters                                                                                                                                                                                                                                    |
@@ -119,7 +119,10 @@ pnpm run build
 
 ## Hosting
 
-Production runs on Cloudflare Workers with Neon PostgreSQL; see [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md). The generic Shopify hosting guides below are upstream template material.
+Production runs on Cloudflare Workers with Neon PostgreSQL. See
+[production deployment](docs/PRODUCTION_DEPLOYMENT.md) and the
+[production operations runbook](docs/PRODUCTION_OPERATIONS.md). The generic Shopify hosting
+guides below are upstream template material.
 
 When you're ready to set up your app in production, you can follow [our deployment documentation](https://shopify.dev/docs/apps/launch/deployment) to host it externally. From there, you have a few options:
 
