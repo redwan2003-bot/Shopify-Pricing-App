@@ -12,6 +12,13 @@ function getConfig() {
         documents: [
           "./app/**/*.{js,ts,jsx,tsx}",
           "./app/.server/**/*.{js,ts,jsx,tsx}",
+          // These modules intentionally construct app-owned metafield names from constants.
+          // Shopify's document registry only accepts fully static operations, so keep the
+          // runtime-tested dynamic documents out of code generation.
+          "!./app/lib/catalog/admin-client.ts",
+          "!./app/lib/catalog/write-port.ts",
+          "!./app/lib/pricing-api/cart-pricing-contract.ts",
+          "!./app/lib/pricing-api/cart-pricing-policy-provider.ts",
         ],
         outputDir: "./app/types",
       }),

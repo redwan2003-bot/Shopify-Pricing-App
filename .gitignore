@@ -66,3 +66,6 @@ scripts/test_*.mjs
 
 # Prisma Worker client (built by `prisma generate`)
 /app/generated/prisma-worker/
+
+# Shopify Admin GraphQL types (built by `pnpm graphql-codegen`)
+/app/types/

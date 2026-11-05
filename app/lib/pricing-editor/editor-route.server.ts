@@ -7,6 +7,7 @@ import { importPricingProfile, PricingImportValidationError } from "../pricing-i
 import { applyLinkReport, buildLinkReport } from "../pricing-import/link-products.ts";
 import { readShopPolicyContext } from "../catalog/admin-client.ts";
 import { blankDraft, draftToImportInput, profileToDraft, type DraftError, type PricingDraft } from "./draft.ts";
+import { pricingProfileSearchWhere } from "./search.ts";
 
 /** Loaders/actions for the pricing profile list and editor pages (JSX-free so they can be exercised directly). */
 
@@ -24,10 +25,7 @@ export const listLoader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const store = await storeFor(session.shop);
   const q = (new URL(request.url).searchParams.get("q") ?? "").trim().slice(0, 100);
-  const where: Prisma.PricingProfileWhereInput = {
-    storeId: store.id,
-    ...(q ? { OR: [{ sku: { contains: q } }, { name: { contains: q, mode: "insensitive" } }] } : {}),
-  };
+  const where = pricingProfileSearchWhere(store.id, q);
   const [total, profiles] = await Promise.all([
     prisma.pricingProfile.count({ where }),
     prisma.pricingProfile.findMany({

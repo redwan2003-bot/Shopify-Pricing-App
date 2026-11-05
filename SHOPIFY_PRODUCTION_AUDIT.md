@@ -1,4 +1,7 @@
-> **Historical document (September 2026).** Written while the app was hosted on Render with SQLite/Postgres. Production now runs on Cloudflare Workers + Neon; see docs/PRODUCTION_DEPLOYMENT.md. References to Render, Docker or `prisma/schema.postgresql.prisma` below describe the former setup.
+> **Superseded historical document (September 2026).** Do not use this audit for current launch
+> decisions. Production now runs on Cloudflare Workers + Neon as an owner-operated, non-billed
+> app. See `RELEASE_READINESS.md` and `docs/PRODUCTION_OPERATIONS.md`. Everything below preserves
+> the old Render/public-listing audit as historical evidence only.
 
 # Shopify Production Architecture Audit
 

@@ -1,76 +1,62 @@
-> **Historical document (September 2026).** Written while the app was hosted on Render with SQLite/Postgres. Production now runs on Cloudflare Workers + Neon; see docs/PRODUCTION_DEPLOYMENT.md. References to Render, Docker or `prisma/schema.postgresql.prisma` below describe the former setup.
+# Production Release Readiness
 
-# Release Readiness — ImprintID Dynamic Pricing
+Status: **operational baseline verified 2026-11-04**.
 
-Baseline frozen at commit `aedc17e` (tagged locally `release-baseline-2026-09-25`, **not pushed**).
-This document is the Phase 0 snapshot for the App Store launch effort. It is a status report,
-not a go/no-go gate — see `SHOPIFY_PRODUCTION_AUDIT.md` and `PRODUCTION_DATABASE_READINESS.md`
-for the audits, and `RELEASE_CANDIDATE_REPORT.md` (written later, before the final push) for the
-actual gate.
+The current release target is an owner-operated, non-billed Shopify app on Cloudflare Workers and
+Neon. It is not a paid public App Store launch. Use `docs/PRODUCTION_OPERATIONS.md` as the release
+and incident runbook; the September Render/App Store audits are historical evidence only.
 
-## Baseline metrics (verified 2026-09-25)
+## Verified production baseline
 
 | Check | Result |
-|---|---|
-| Unit/integration tests | **955 / 955 passing** (`npm test`) |
-| Typecheck | **clean** (`npm run typecheck`) |
-| Lint | **clean** (`npx eslint app/`) |
-| SQLite ↔ PostgreSQL schema drift | **none** beyond the `datasource` block (CI-enforced) |
-| Live pricing-editor checks | **21 / 21 passing** (`scripts/_editor-live.mjs`, stubbed Admin API + real SQLite) |
-| Live storefront checks (from 2026-09-23) | 19 interaction + 4 security + cold start + inquiry + options + cart, all passing |
-| Live settings checks (from 2026-09-23) | 9 checks passing |
-| Live CSV import checks (from 2026-09-23) | real 3.4 MB catalog file: 270 products / 147 ready / 123 held back, idempotent re-run |
+| --- | --- |
+| Source | `origin/main` = `8e9dacdebae0db612f792065b626f0af8d27b1c7` |
+| Worker | HTTP 200 health; version `1a8c42e2-7627-40a6-bcd3-6e9ecbeccac1` |
+| Shopify app version | `imprintid-dynamic-pricing-50`, active, built from the same commit |
+| Signing-secret fingerprint | `d23c73d4`, enforced by the deployment workflow |
+| Production catalog | 13,387 products; 147 profiles; 145 linked/enforcement-ready |
+| Enforcement | `pilot` |
+| Billing | Not applicable; retired code and gates removed |
+| Hosting | Cloudflare Workers + Neon; Render retired |
 
-No code changes were made to reach this baseline beyond what was already committed as of
-`aedc17e` (the pricing-profile editor). Freeze is in effect: the plan below explicitly avoids
-touching the pricing-profile CRUD path unless a release blocker is found there.
+The merchant journey was verified through Home, Product Configuration, Pricing Profiles,
+Attachments, and Import Pricing. The production Worker served authenticated requests successfully.
 
-## Known issues at baseline
+## Local release-candidate quality gate (2026-11-04)
 
-1. **123 catalog SKUs held back on import**, categorized in `PRODUCTION_DATABASE_READINESS.md`
-   §"CSV held-back reasons" — none are import bugs; each needs source-data attention (missing
-   quantity tiers, a fuzzy/derived SKU match, or a decoration-method mapping) and can now be
-   fixed one at a time in the new pricing-profile editor.
-2. **Product-linking state cannot currently be verified against production.** The local dev
-   Prisma database's offline session for `imprintid-pricing-dev.myshopify.com` expired
-   2026-09-22; the most recent CSV re-import (2026-09-23) ran *after* that, so its automatic
-   relink step could not authenticate and only logged an error — it did not block the import.
-   Locally only 1 of 147 profiles shows as linked, and that single row uses a legacy bare-numeric
-   `shopifyProductId` format inconsistent with the current gid-based linking code. This does
-   **not** mean production is in this state — Render's Postgres is a separate database this
-   environment has no access to — but it does mean the earlier "145 linked / 2 held back" figure
-   from 2026-09-23 is unverified against current code and must be re-confirmed with a live
-   session before launch. See `PRODUCTION_DATABASE_READINESS.md`.
-3. **A real production secret was committed to git as an "example" value.**
-   `.env.production.example` contained the actual `IMPRINTID_CART_SIGNING_SECRET` in cleartext
-   (added in commits `5edcdd7` / `a4a0217`, already on `origin/main`). Fixed in this session by
-   replacing it with a placeholder (see `SHOPIFY_PRODUCTION_AUDIT.md` §1 for the full writeup) —
-   **the underlying secret itself still needs rotation**, since git history retains the old
-   value regardless of this fix.
-4. **Render Postgres seed/link status is unverified** from this local environment (no
-   credentials here) — carried over from before this session.
-5. **Billing is not implemented.** No Billing API or Shopify App Pricing configuration exists in
-   the codebase. This blocks App Store submission for a public app and needs a business decision
-   (plan name, price, trial) before implementation — tracked in `BILLING_ARCHITECTURE.md`.
-6. Listing assets (icon, screenshots, screencast, test instructions), privacy policy URL, and
-   support contact are not yet prepared.
-7. No test has been run on a real Basic/Grow-plan store — only the Partner dev store.
+The current uncommitted candidate passed:
 
-## What's explicitly out of scope for this pass
+- Full application suite: 1,044 tests discovered; 1,043 passed, 0 failed, and one intentionally
+  skipped full-port performance round trip.
+- Pricing-editor live flow against the isolated Neon test branch: all checks passed.
+- PostgreSQL case-insensitive SKU-search regression: 2/2 passed.
+- Rust Functions: 8/8 Cart Transform tests and 16/16 Validation tests passed; release wasm sizes
+  were 133,457 bytes and 209,718 bytes, both below Shopify's 256 KB limit.
+- Typecheck, lint, production build, GraphQL code generation, frozen-lockfile install, and Shopify
+  production-config validation passed.
+- Production dependency audit reported no known vulnerabilities. Remaining audit notices are in
+  build-only upstream tooling and are not shipped in the Worker or Rust Functions.
+- Credential-pattern scan found no tracked private keys or common live-token formats; generated
+  Function secret files remain ignored.
 
-Per the user's original editor scope: bulk editing and new decoration methods. Per this launch
-plan: no feature development on the pricing-profile editor itself unless a release blocker
-surfaces there — it is frozen at `aedc17e`.
+## Intentional limits
 
-## Progress log (updates the "Known issues" list above without rewriting the baseline snapshot)
+- Two archived-only products are intentionally unlinked; they are not launch blockers.
+- Order Workflows is intentionally disabled and hidden while `ENABLE_ORDER_WORKFLOWS` is unset.
+- Technical `AppDistribution.AppStore` remains unchanged for Shopify Functions compatibility. It
+  does not imply paid billing or an active listing effort.
+- Enforcement remains in `pilot`; expanding to `universal` is a separate controlled rollout.
 
-- **2026-09-25, commit `7d83016`**: issue 3 (leaked secret) fixed in the file; rotation itself
-  is still a manual action for the user (Render env var + `npm run fn:config` + Function
-  redeploy).
-- **2026-09-25**: issue 5 (billing) **implemented** — see `BILLING_ARCHITECTURE.md` for the full
-  record. One flat plan, $29.99/month, 14-day trial; gates pricing-profile editing only, never
-  storefront pricing. 961/961 tests passing (was 955), typecheck/lint clean, 39 live checks
-  across `scripts/_billing-live.mjs` (12) and the extended `scripts/_editor-live.mjs` (27, up
-  from 21). Not yet exercised against a real Shopify store's real billing flow — see
-  `BILLING_ARCHITECTURE.md`'s "still manual" section.
-- Issues 1, 2, 4, 6, 7 remain open as described above.
+## Gate for the next release
+
+A release is ready only when:
+
+1. The pull request's latest commit has green Test & Build and both Rust Function jobs.
+2. Any migration SQL has been reviewed and a recovery point is available.
+3. Worker and Shopify changes are released in the order in the operations runbook.
+4. Worker health, active Shopify version, signing fingerprint, merchant pages, quote/cart behavior,
+   and catalog synchronization all pass after release.
+5. The previous Worker deployment and Shopify app version remain available for rollback.
+
+Do not use the old Render, SQLite, paid billing, or 123-held-back-SKU claims as current launch
+criteria.
