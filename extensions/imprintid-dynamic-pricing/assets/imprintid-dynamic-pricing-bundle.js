@@ -247,6 +247,12 @@ function legacyV1QuoteAttributes(cartPricing) {
   var formatMoney$1 = function(cents) {
     return formatMoney(cents, document.documentElement.lang);
   };
+  function responseServerNowSeconds(response) {
+    var raw = response && response.headers && response.headers.get("Date");
+    var milliseconds = raw ? Date.parse(raw) : NaN;
+    if (!Number.isFinite(milliseconds) || milliseconds <= 0) return null;
+    return Math.floor(milliseconds / 1e3);
+  }
   function fetchWithRetry(url, options, attempts, timeoutMs) {
     var attempt = 0;
     function once() {
@@ -333,6 +339,8 @@ function legacyV1QuoteAttributes(cartPricing) {
     this.requestSeq = 0;
     this.activeController = null;
     this.cartPricing = null;
+    this.quoteServerNowSeconds = null;
+    this.quoteReceivedAtMonotonicMs = null;
     this.productGid = root.dataset.productGid || "";
     this.shopifyProductId = parseShopifyNumericId(root.dataset.shopifyProductId) || "";
     this.pricingEnforcementIntended = this.shopifyProductId.length > 0;
@@ -424,8 +432,8 @@ function legacyV1QuoteAttributes(cartPricing) {
       productionWrap: qs(root, "[data-imprintid-pricing-production-wrap]")
     };
     this.recalculate = debounce(this.recalculate.bind(this), DEBOUNCE_MS);
-    this._now = function() {
-      return Math.floor(Date.now() / 1e3);
+    this._monotonicNow = function() {
+      return window.performance && typeof window.performance.now === "function" ? window.performance.now() : null;
     };
     this.onConfigInput = (function() {
       this.configSeq++;
@@ -985,7 +993,11 @@ function legacyV1QuoteAttributes(cartPricing) {
       signal: controller.signal
     }).then(function(response) {
       return response.json().then(function(body) {
-        return { status: response.status, body };
+        return {
+          status: response.status,
+          body,
+          serverNowSeconds: responseServerNowSeconds(response)
+        };
       });
     }).then(function(result) {
       if (seq !== self.requestSeq) return;
@@ -1000,7 +1012,14 @@ function legacyV1QuoteAttributes(cartPricing) {
           self.renderIdentityFailure();
           return;
         }
-        self.renderResult(result.body.data, requestProductId, requestVariantId, requestVariantSku, requestQuantity);
+        self.renderResult(
+          result.body.data,
+          requestProductId,
+          requestVariantId,
+          requestVariantSku,
+          requestQuantity,
+          result.serverNowSeconds
+        );
       } else {
         self.renderError(result.body && result.body.error);
       }
@@ -1041,17 +1060,27 @@ function legacyV1QuoteAttributes(cartPricing) {
     this.quotedVariantId = null;
     this.quotedVariantSku = null;
     this.quotedQuantity = null;
+    this.quoteServerNowSeconds = null;
+    this.quoteReceivedAtMonotonicMs = null;
   };
-  PricingBlock.prototype.v2QuoteOwns = function(cartPricing, productId, variantId, quantity) {
+  PricingBlock.prototype.v2QuoteOwns = function(cartPricing, productId, variantId, quantity, serverNowSeconds) {
     var check = readSignedV2Quote(cartPricing);
     if (!check.ok) return false;
     if (parseProductVariantGid(check.payload.variantGid) !== variantId) return false;
     if (parseProductGid(check.payload.productGid) !== productId) return false;
     if (check.payload.quantity !== quantity) return false;
-    if (isSignedV2QuoteExpired(check.payload, this._now())) return false;
+    var nowSeconds = serverNowSeconds;
+    if (!Number.isSafeInteger(nowSeconds) || nowSeconds <= 0) {
+      var monotonicNow = this._monotonicNow();
+      if (!Number.isSafeInteger(this.quoteServerNowSeconds) || this.quoteServerNowSeconds <= 0 || !Number.isFinite(this.quoteReceivedAtMonotonicMs) || !Number.isFinite(monotonicNow) || monotonicNow < this.quoteReceivedAtMonotonicMs) return false;
+      nowSeconds = Math.floor(
+        this.quoteServerNowSeconds + (monotonicNow - this.quoteReceivedAtMonotonicMs) / 1e3
+      );
+    }
+    if (isSignedV2QuoteExpired(check.payload, nowSeconds)) return false;
     return true;
   };
-  PricingBlock.prototype.renderResult = function(data, requestProductId, requestVariantId, requestVariantSku, requestQuantity) {
+  PricingBlock.prototype.renderResult = function(data, requestProductId, requestVariantId, requestVariantSku, requestQuantity, serverNowSeconds) {
     if (!this.canUseDynamicPricing()) {
       this.failClosedForSync();
       return;
@@ -1065,12 +1094,20 @@ function legacyV1QuoteAttributes(cartPricing) {
     this.els.total.textContent = formatMoney$1(data.totals.netTotalCents);
     var quoteReady = false;
     if (data.cartPricing && Number(data.cartPricing.version) === 2) {
-      quoteReady = this.v2QuoteOwns(data.cartPricing, requestProductId, requestVariantId, requestQuantity);
+      quoteReady = this.v2QuoteOwns(
+        data.cartPricing,
+        requestProductId,
+        requestVariantId,
+        requestQuantity,
+        serverNowSeconds
+      );
     } else if (data.cartPricing) {
       quoteReady = !!legacyV1QuoteAttributes(data.cartPricing);
     }
     this.setCartPricing(quoteReady ? data.cartPricing : null);
     if (quoteReady) {
+      this.quoteServerNowSeconds = serverNowSeconds;
+      this.quoteReceivedAtMonotonicMs = this._monotonicNow();
       this.quotedProductId = requestProductId;
       this.quotedVariantId = requestVariantId;
       this.quotedVariantSku = requestVariantSku;
