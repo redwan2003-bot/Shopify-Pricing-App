@@ -105,8 +105,8 @@
 .imprintid-pricing__field input[type="number"],
 .imprintid-pricing__field select {
   width: 100%;
-  min-height: 42px;
-  padding: 0.65rem 0.85rem;
+  min-height: 48px;
+  padding: 0.8rem 1rem;
   border: 1.5px solid #cbd5e1;
   border-radius: var(--imprintid-radius);
   font-size: 0.95rem;
@@ -160,7 +160,7 @@
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
-  padding-right: 2.25rem;
+  padding-right: 2.75rem;
 }
 
 .imprintid-pricing__select-arrow {
@@ -261,8 +261,8 @@
 
 .imprintid-pricing__dropdown summary {
   position: relative;
-  min-height: 42px;
-  padding: 0.65rem 2.5rem 0.65rem 0.85rem;
+  min-height: 48px;
+  padding: 0.8rem 2.75rem 0.8rem 1rem;
   display: flex;
   align-items: center;
   font-size: 0.92rem;
@@ -534,7 +534,7 @@
 
 .imprintid-pricing__button-row {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.85rem;
   align-items: stretch;
 }
 
@@ -543,12 +543,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 48px;
-  padding: 0.75rem 1.25rem;
+  min-height: 50px;
+  padding: 0.875rem 1.35rem;
   border-radius: var(--imprintid-radius);
   font-family: inherit;
   font-size: 0.95rem;
   font-weight: 700;
+  line-height: 1.2;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
@@ -731,7 +732,8 @@
 .imprintid-pricing__modal-field .imprintid-pricing__input,
 .imprintid-pricing__modal-field .imprintid-pricing__textarea {
   width: 100%;
-  padding: 0.65rem 0.85rem;
+  min-height: 48px;
+  padding: 0.8rem 1rem;
   border: 1.5px solid #cbd5e1;
   border-radius: 8px;
   font-family: inherit;

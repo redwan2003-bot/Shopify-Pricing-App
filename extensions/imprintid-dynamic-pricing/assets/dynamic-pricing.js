@@ -958,6 +958,25 @@ import {
   PricingBlock.prototype.bindModals = function () {
     var self = this;
 
+    var ensureInquiryFieldNames = function (form) {
+      if (!form) return;
+      var fields = [
+        ["name", 'input[id*="-name-"]'],
+        ["email", 'input[id*="-email-"]'],
+        ["quantity", 'input[id*="-qty-"]'],
+        ["message", 'textarea[id*="-message-"], textarea[id*="-notes-"]'],
+      ];
+      for (var i = 0; i < fields.length; i++) {
+        var named = form.querySelector('[name="' + fields[i][0] + '"]');
+        if (named) continue;
+        var fallback = form.querySelector(fields[i][1]);
+        if (fallback) fallback.setAttribute("name", fields[i][0]);
+      }
+    };
+
+    ensureInquiryFieldNames(this.els.infoForm);
+    ensureInquiryFieldNames(this.els.quoteForm);
+
     // Helper: close a <dialog> when the user clicks the backdrop (the ::backdrop
     // pseudo-element) — detected by a click whose target is the <dialog> itself
     // (not a descendant).
@@ -991,6 +1010,7 @@ import {
       if (this.els.infoForm) {
         this.els.infoForm.addEventListener("submit", function (e) {
           e.preventDefault();
+          if (!self.els.infoForm.reportValidity()) return;
           self.submitInquiry("info", self.els.infoForm, self.els.infoSuccess, self.els.infoError, self.els.infoModal);
         });
       }
@@ -1016,6 +1036,7 @@ import {
       if (this.els.quoteForm) {
         this.els.quoteForm.addEventListener("submit", function (e) {
           e.preventDefault();
+          if (!self.els.quoteForm.reportValidity()) return;
           self.submitInquiry("quote", self.els.quoteForm, self.els.quoteSuccess, self.els.quoteError, self.els.quoteModal);
         });
       }
