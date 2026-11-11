@@ -704,6 +704,24 @@ test("5B.3A: a valid authoritative calculation returns a COMPLETE v2 quote (all 
   });
 });
 
+test("5B.3A: a trusted request timestamp is bound into the signed v2 quote", async () => {
+  await withEnv(V2_ENV, async () => {
+    const trustedNow = 1_794_374_101;
+    const result = await handleStorefrontPricingRequest(
+      prisma,
+      SHOP_DOMAIN,
+      { sku: "", shopifyProductId: LNY01_PRODUCT_ID, quantity: 100 },
+      { shopifyProductId: LNY01_PRODUCT_ID, shopifyVariantId: LNY01_VARIANT_ID },
+      { policyProvider: fixedProvider() as never, nowSeconds: trustedNow },
+    );
+    assert.equal(result.body.ok, true);
+    if (!result.body.ok) return;
+    assert.ok(result.body.data.cartPricing);
+    const payload = JSON.parse(result.body.data.cartPricing!.payload) as Record<string, unknown>;
+    assert.equal(payload.issuedAtServer, trustedNow);
+  });
+});
+
 test("5B.3A: browser-supplied monetary totals + adjustment variant in the body are IGNORED", async () => {
   await withEnv(V2_ENV, async () => {
     const result = await v2Result(
