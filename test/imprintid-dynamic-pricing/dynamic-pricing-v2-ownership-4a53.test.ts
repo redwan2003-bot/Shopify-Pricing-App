@@ -139,6 +139,7 @@ function pricingRootHtml(attrs: Record<string, string>) {
 interface SetupOptions {
   /** override the cartPricing returned by the POST, given the request (numeric variant id + quantity). */
   cartPricingFor?: (variantNumeric: string, quantity: number) => unknown;
+  responseDate?: string | null;
 }
 
 async function setup(options: SetupOptions = {}) {
@@ -192,7 +193,15 @@ async function setup(options: SetupOptions = {}) {
       const qty = Number(body?.quantity ?? 0);
       payload = calcBody(OVERRIDE_ID(String(body?.shopifyProductId ?? ""), vid), qty, vid, cartPricingFor(vid, qty));
     }
-    return { ok: true, status: 200, json: async () => payload } as Response;
+    const responseDate = options.responseDate === undefined
+      ? new Date((ISSUED_AT + 5) * 1000).toUTCString()
+      : options.responseDate;
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers(responseDate ? { Date: responseDate } : {}),
+      json: async () => payload,
+    } as Response;
   }) as typeof fetch;
   (globalThis as unknown as { AbortController: typeof AbortController }).AbortController = w.AbortController;
   (globalThis as unknown as { CustomEvent: typeof CustomEvent }).CustomEvent = w.CustomEvent;
@@ -203,8 +212,6 @@ async function setup(options: SetupOptions = {}) {
   root.setAttribute("data-imprintid-pricing", "");
   const ImprintIdPricing = (w as unknown as { ImprintIdPricing: { PricingBlock: new (r: Element) => unknown } }).ImprintIdPricing;
   const block = new ImprintIdPricing.PricingBlock(root) as Record<string, unknown>;
-  // freeze "now" just after the quote's issue time so quotes are fresh unless a test moves it
-  (block as { _now: () => number })._now = () => ISSUED_AT + 5;
   return { dom, w, root, block, fetchCalls };
 }
 
@@ -251,6 +258,19 @@ test("5B.3A-1: a complete owning v2 quote enables Add to Cart; the click POSTs e
   assert.equal(props._imprintid_pricing_payload, (block as { cartPricing: { payload: string } }).cartPricing.payload, "payload submitted unchanged");
   assert.equal(props._imprintid_pricing_signature, "deadbeefsig");
   assert.equal(JSON.parse(props._imprintid_pricing_payload).quoteId, held.quoteId, "same quote, never re-built");
+});
+
+test("5B.3A-1b: a client clock 14 hours ahead does not reject a quote validated against Shopify response time", async () => {
+  const { root, block } = await setup();
+  await wait(90);
+  assert.equal(btn(root).disabled, false, "the local wall clock is not authoritative");
+});
+
+test("5B.3A-1c: a missing server Date fails v2 quote validation closed", async () => {
+  const { root, block } = await setup({ responseDate: null });
+  await wait(90);
+  assert.equal(btn(root).disabled, true);
+  assert.equal((block as { cartPricing: unknown }).cartPricing, null);
 });
 
 test("5B.3A-2: a `version:1` envelope carrying a v2-shaped payload is rejected — never re-labelled / submitted as v1 (no downgrade)", async () => {
@@ -380,8 +400,9 @@ test("5B.3A-9: an EXPIRED v2 quote fails closed on Add to Cart (no request)", as
   const { root, block, fetchCalls } = await setup();
   await wait(90);
   assert.equal(btn(root).disabled, false, "sanity: fresh quote enabled");
-  // move the clock past issue + TTL
-  (block as { _now: () => number })._now = () => ISSUED_AT + 30 * 60 + 10;
+  // Move the monotonic receipt clock past the quote TTL. Local wall time is irrelevant.
+  const receivedAt = (block as { quoteReceivedAtMonotonicMs: number }).quoteReceivedAtMonotonicMs;
+  (block as { _monotonicNow: () => number })._monotonicNow = () => receivedAt + (30 * 60 + 10) * 1000;
   (block as { addToCart: () => void }).addToCart();
   await wait(40);
   assert.equal(cartAdds(fetchCalls).length, 0, "expired quote never POSTs /cart/add.js");

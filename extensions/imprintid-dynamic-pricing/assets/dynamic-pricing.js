@@ -91,6 +91,13 @@ import {
     return formatMoneyRaw(cents, document.documentElement.lang);
   };
 
+  function responseServerNowSeconds(response) {
+    var raw = response && response.headers && response.headers.get("Date");
+    var milliseconds = raw ? Date.parse(raw) : NaN;
+    if (!Number.isFinite(milliseconds) || milliseconds <= 0) return null;
+    return Math.floor(milliseconds / 1000);
+  }
+
   // The app host can take tens of seconds to answer the first request after being idle, so
   // a bare fetch either hangs or fails on a cold start. Each attempt gets its own timeout,
   // and network errors, timeouts and 502/503/504 are retried a few times before giving up.
@@ -227,6 +234,8 @@ import {
     // recalculation clears this first, so Add to Cart can only ever submit a payload
     // that was genuinely signed for what's on screen right now.
     this.cartPricing = null;
+    this.quoteServerNowSeconds = null;
+    this.quoteReceivedAtMonotonicMs = null;
 
     // --- Variant synchronization state (Task 2B) ---------------------------------
     //
@@ -426,10 +435,12 @@ import {
     };
 
     this.recalculate = debounce(this.recalculate.bind(this), DEBOUNCE_MS);
-    // Task 5B.3A — current wall-clock (seconds). A method, not a captured value, and
-    // overridable in tests, so quote-expiry checks are deterministic.
-    this._now = function () {
-      return Math.floor(Date.now() / 1000);
+    // Quote expiry uses Shopify's HTTP response clock plus monotonic elapsed time.
+    // Never trust the customer's wall clock: it can be misconfigured by many hours.
+    this._monotonicNow = function () {
+      return window.performance && typeof window.performance.now === "function"
+        ? window.performance.now()
+        : null;
     };
     // Task 5B.3A — the synchronous handler every config/quantity control fires: bump the
     // ownership generation, drop the now-stale signed quote AT ONCE, then let the
@@ -1288,7 +1299,11 @@ import {
     })
       .then(function (response) {
         return response.json().then(function (body) {
-          return { status: response.status, body: body };
+          return {
+            status: response.status,
+            body: body,
+            serverNowSeconds: responseServerNowSeconds(response),
+          };
         });
       })
       .then(function (result) {
@@ -1318,7 +1333,14 @@ import {
             self.renderIdentityFailure();
             return;
           }
-          self.renderResult(result.body.data, requestProductId, requestVariantId, requestVariantSku, requestQuantity);
+          self.renderResult(
+            result.body.data,
+            requestProductId,
+            requestVariantId,
+            requestVariantSku,
+            requestQuantity,
+            result.serverNowSeconds,
+          );
         } else {
           self.renderError(result.body && result.body.error);
         }
@@ -1377,6 +1399,8 @@ import {
     this.quotedVariantId = null;
     this.quotedVariantSku = null;
     this.quotedQuantity = null;
+    this.quoteServerNowSeconds = null;
+    this.quoteReceivedAtMonotonicMs = null;
   };
 
   /**
@@ -1386,17 +1410,42 @@ import {
    * binding matches. A v1 envelope, an incomplete payload, a wrong-variant / wrong-
    * quantity binding, or an elapsed lifetime all return `false` (fail closed).
    */
-  PricingBlock.prototype.v2QuoteOwns = function (cartPricing, productId, variantId, quantity) {
+  PricingBlock.prototype.v2QuoteOwns = function (cartPricing, productId, variantId, quantity, serverNowSeconds) {
     var check = readSignedV2Quote(cartPricing);
     if (!check.ok) return false;
     if (parseProductVariantGid(check.payload.variantGid) !== variantId) return false;
     if (parseProductGid(check.payload.productGid) !== productId) return false;
     if (check.payload.quantity !== quantity) return false;
-    if (isSignedV2QuoteExpired(check.payload, this._now())) return false;
+    // The response Date is from Shopify's proxy and uses the same clock domain as the
+    // signed `issuedAtServer`. For later Add-to-Cart checks, advance that trusted
+    // receipt time only by the browser's monotonic elapsed duration.
+    var nowSeconds = serverNowSeconds;
+    if (!Number.isSafeInteger(nowSeconds) || nowSeconds <= 0) {
+      var monotonicNow = this._monotonicNow();
+      if (
+        !Number.isSafeInteger(this.quoteServerNowSeconds) ||
+        this.quoteServerNowSeconds <= 0 ||
+        !Number.isFinite(this.quoteReceivedAtMonotonicMs) ||
+        !Number.isFinite(monotonicNow) ||
+        monotonicNow < this.quoteReceivedAtMonotonicMs
+      ) return false;
+      nowSeconds = Math.floor(
+        this.quoteServerNowSeconds +
+        (monotonicNow - this.quoteReceivedAtMonotonicMs) / 1000,
+      );
+    }
+    if (isSignedV2QuoteExpired(check.payload, nowSeconds)) return false;
     return true;
   };
 
-  PricingBlock.prototype.renderResult = function (data, requestProductId, requestVariantId, requestVariantSku, requestQuantity) {
+  PricingBlock.prototype.renderResult = function (
+    data,
+    requestProductId,
+    requestVariantId,
+    requestVariantSku,
+    requestQuantity,
+    serverNowSeconds,
+  ) {
     // Task 2B.2 — never render a successful, addable quote for a block that can't
     // safely resolve the selected variant. (A gated `_recalculateImmediate` means this
     // is normally unreachable in that state; kept as the requirement-5 guard on the
@@ -1429,7 +1478,13 @@ import {
     // Anything else → `cartPricing` stays null and Add to Cart stays disabled.
     var quoteReady = false;
     if (data.cartPricing && Number(data.cartPricing.version) === 2) {
-      quoteReady = this.v2QuoteOwns(data.cartPricing, requestProductId, requestVariantId, requestQuantity);
+      quoteReady = this.v2QuoteOwns(
+        data.cartPricing,
+        requestProductId,
+        requestVariantId,
+        requestQuantity,
+        serverNowSeconds,
+      );
     } else if (data.cartPricing) {
       quoteReady = !!legacyV1QuoteAttributes(data.cartPricing);
     }
@@ -1441,6 +1496,8 @@ import {
     // actually sent with, never by re-reading current state now (which may have moved
     // on by the time this response arrives).
     if (quoteReady) {
+      this.quoteServerNowSeconds = serverNowSeconds;
+      this.quoteReceivedAtMonotonicMs = this._monotonicNow();
       this.quotedProductId = requestProductId;
       this.quotedVariantId = requestVariantId;
       this.quotedVariantSku = requestVariantSku;
