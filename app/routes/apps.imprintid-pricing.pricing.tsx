@@ -27,6 +27,15 @@ const SHOP_UNAVAILABLE = {
   error: { code: "SHOP_NOT_AVAILABLE", message: "Pricing is not available for this shop." },
 };
 
+function authenticatedProxyTimestamp(request: Request): number | null {
+  const values = new URL(request.url).searchParams.getAll("timestamp");
+  if (values.length !== 1) return null;
+  const [raw] = values;
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
 /**
  * The PUBLIC App Proxy pricing route. Task 4A.1 §1: BOTH handlers below require a valid
  * Shopify product id + variant id on every request (`requireStorefrontProductContext`)
@@ -113,6 +122,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const { session, admin } = await authenticate.public.appProxy(request);
   if (!session) return jsonResponse({ ...SHOP_UNAVAILABLE }, 404);
+  const nowSeconds = authenticatedProxyTimestamp(request);
+  if (nowSeconds === null) {
+    return jsonResponse({ ok: false, error: { code: "INVALID_PROXY_TIMESTAMP", message: "The pricing request timestamp is invalid." } }, 400);
+  }
 
   let rawBody: unknown;
   try {
@@ -139,7 +152,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     { shopifyProductId: resolved.shopifyProductId, shopifyVariantId: resolved.shopifyVariantId },
     // Task 5B.3A: the authenticated Admin client lets the v2 policy provider read the
     // app-owned enforcement-policy metafields. `null` ⇒ the provider fails closed.
-    { admin: (admin as AdminGraphqlClientLike | undefined) ?? null },
+    {
+      admin: (admin as AdminGraphqlClientLike | undefined) ?? null,
+      // Shopify includes `timestamp` in the HMAC-verified App Proxy query. Use it
+      // instead of Cloudflare Workers' intentionally frozen Date.now() clock.
+      nowSeconds,
+    },
   );
   return jsonResponse(result.body, result.status);
 };

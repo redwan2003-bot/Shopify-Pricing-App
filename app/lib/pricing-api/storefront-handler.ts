@@ -118,6 +118,8 @@ export interface StorefrontResult {
 export interface StorefrontPricingOptions {
   admin?: AdminGraphqlClientLike | null;
   policyProvider?: CartPricingPolicyProvider;
+  /** Authenticated Shopify App Proxy request timestamp (Unix seconds). */
+  nowSeconds?: number;
 }
 
 export async function handleStorefrontPricingRequest(
@@ -180,7 +182,13 @@ export async function handleStorefrontPricingRequest(
       );
       enforcementState = "block";
     } else if (envelope === "v2") {
-      cartPricing = await buildSignedV2Quote(prisma, result.body.data, requestIdentity, decision.context);
+      cartPricing = await buildSignedV2Quote(
+        prisma,
+        result.body.data,
+        requestIdentity,
+        decision.context,
+        pricingOptions?.nowSeconds,
+      );
       enforcementState = cartPricing ? "enforce" : "block";
     } else {
       // An enforced product on a deployment that cannot issue a v2 quote → fail closed.
@@ -416,6 +424,7 @@ async function buildSignedV2Quote(
   result: PricingCalculationResult,
   requestIdentity: StorefrontRequestIdentity,
   enforcement: CartPricingEnforcementContext,
+  nowSeconds?: number,
 ): Promise<SignedCartPricingPayloadV2 | null> {
   // Identity is the AUTHORITATIVE, Admin-verified product/variant (validated bare
   // decimal ids in `resolveStorefrontProductContext`) — never a browser value.
@@ -474,6 +483,7 @@ async function buildSignedV2Quote(
     enforcement,
     normalizedConfigJson: normalized.canonicalJson,
     configDigest: normalized.digest,
+    now: nowSeconds,
   });
   const signed = signCartPricingPayloadV2(payload, normalized.canonicalJson, secret);
 
