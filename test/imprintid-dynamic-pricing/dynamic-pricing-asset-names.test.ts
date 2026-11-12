@@ -18,3 +18,19 @@ test("the theme block uses collision-safe storefront asset names", async () => {
   assert.match(client, /"issuedAtServer"/);
   assert.match(client, /catalog\.productColors && catalog\.productColors\.length/);
 });
+
+test("quote forms keep named fields and validate before submission", async () => {
+  const [block, client, styles] = await Promise.all([
+    readFile(new URL("blocks/dynamic-pricing.liquid", extensionRoot), "utf8"),
+    readFile(new URL("assets/dynamic-pricing.js", extensionRoot), "utf8"),
+    readFile(new URL("assets/dynamic-pricing.css", extensionRoot), "utf8"),
+  ]);
+
+  for (const name of ["name", "email", "quantity", "message", "website"]) {
+    assert.match(block, new RegExp(`name=["']${name}["']`));
+  }
+  assert.match(client, /ensureInquiryFieldNames/);
+  assert.match(client, /reportValidity\(\)/);
+  assert.match(styles, /min-height:\s*48px/);
+  assert.match(styles, /min-height:\s*50px/);
+});

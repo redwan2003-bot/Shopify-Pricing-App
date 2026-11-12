@@ -747,6 +747,23 @@ function legacyV1QuoteAttributes(cartPricing) {
   };
   PricingBlock.prototype.bindModals = function() {
     var self = this;
+    var ensureInquiryFieldNames = function(form) {
+      if (!form) return;
+      var fields = [
+        ["name", 'input[id*="-name-"]'],
+        ["email", 'input[id*="-email-"]'],
+        ["quantity", 'input[id*="-qty-"]'],
+        ["message", 'textarea[id*="-message-"], textarea[id*="-notes-"]']
+      ];
+      for (var i = 0; i < fields.length; i++) {
+        var named = form.querySelector('[name="' + fields[i][0] + '"]');
+        if (named) continue;
+        var fallback = form.querySelector(fields[i][1]);
+        if (fallback) fallback.setAttribute("name", fields[i][0]);
+      }
+    };
+    ensureInquiryFieldNames(this.els.infoForm);
+    ensureInquiryFieldNames(this.els.quoteForm);
     var closeOnBackdropClick = function(dialog) {
       dialog.addEventListener("click", function(e) {
         if (e.target === dialog) dialog.close();
@@ -772,6 +789,7 @@ function legacyV1QuoteAttributes(cartPricing) {
       if (this.els.infoForm) {
         this.els.infoForm.addEventListener("submit", function(e) {
           e.preventDefault();
+          if (!self.els.infoForm.reportValidity()) return;
           self.submitInquiry("info", self.els.infoForm, self.els.infoSuccess, self.els.infoError, self.els.infoModal);
         });
       }
@@ -793,6 +811,7 @@ function legacyV1QuoteAttributes(cartPricing) {
       if (this.els.quoteForm) {
         this.els.quoteForm.addEventListener("submit", function(e) {
           e.preventDefault();
+          if (!self.els.quoteForm.reportValidity()) return;
           self.submitInquiry("quote", self.els.quoteForm, self.els.quoteSuccess, self.els.quoteError, self.els.quoteModal);
         });
       }
